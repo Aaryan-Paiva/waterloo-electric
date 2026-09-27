@@ -76,7 +76,7 @@ export default function Home() {
               </a>
             </div>
             <div className="mt-10 grid grid-cols-3 gap-x-5 gap-y-4 max-w-sm border-t pt-6" style={{ borderColor: "#2C332D" }}>
-              {[["18", "owner agents"], ["4", "seasons tested"], ["0", "fabricated numbers"]].map(([n, l]) => (
+              {[["18", "owner agents"], ["4", "seasons tested"], ["3", "load types"]].map(([n, l]) => (
                 <div key={l}>
                   <div style={{ fontFamily: FD, fontWeight: 700, color: AMB }} className="text-2xl">{n}</div>
                   <div className="mt-1 text-xs" style={{ color: "#9C9787", lineHeight: 1.35 }}>{l}</div>
