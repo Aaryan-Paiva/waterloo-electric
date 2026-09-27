@@ -10,7 +10,7 @@ import numpy as np
 
 from ..agents.util import uhash
 from ..schemas.owners import BehavioralPrefs, EconomicPrefs, OperationalPrefs, OwnerAgent
-from ..world.population import build_population
+from ..world.population import build_population, current_variant
 
 GROUPS = {"battery": ("battery_operator", 5, 2), "ev_fleet": ("ev_aggregator", 5, 2), "building": ("building_portfolio", 8, 3)}   # (type, owners, min size)
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -55,20 +55,31 @@ def _label(agents: dict, ids: list[str]) -> str:
     return top.replace("_", " ").title()
 
 
-@lru_cache(maxsize=4)
-def build_owners(world_id: str) -> tuple[OwnerAgent, ...]:
+@lru_cache(maxsize=16)
+def _owners(world_id: str, variant: object) -> tuple[OwnerAgent, ...]:
     pop = build_population(world_id)
     by_id = {a.id: a for a in pop.agents}
     owners: list[OwnerAgent] = []
     for atype, (otype, k, min_size) in GROUPS.items():
         ids = sorted(a.id for a in pop.agents if a.type == atype)
-        for n, group in enumerate(_partition(ids, k, min_size, pop.seed, f"{world_id}|{atype}")):
+        if not ids:
+            continue
+        k_eff = max(1, min(k, len(ids) // min_size))               # fewer devices than owners x minimum: fewer owners
+        for n, group in enumerate(_partition(ids, k_eff, min(min_size, len(ids)), pop.seed, f"{world_id}|{atype}")):
             oid = f"owner_{otype.split('_')[0]}_{n + 1:02d}"
             econ, op, beh = _prefs(pop.seed, oid, otype)
             noun = {"battery_operator": "Battery Operator", "ev_aggregator": "EV Aggregator", "building_portfolio": "Building Portfolio"}[otype]
             owners.append(OwnerAgent(id=oid, name=f"{_label(by_id, group)} {noun} {LETTERS[n]}", owner_type=otype, controlled_asset_ids=group,
                                      economic=econ, operational=op, behavioral=beh))
     return tuple(owners)
+
+
+def build_owners(world_id: str) -> tuple[OwnerAgent, ...]:
+    """Owners regroup automatically when the sandbox edits the device counts (variant-aware, cached per variant)."""
+    return _owners(world_id, current_variant())
+
+
+build_owners.cache_clear = _owners.cache_clear  # type: ignore[attr-defined]
 
 
 def owner_of(world_id: str, asset_id: str) -> str | None:

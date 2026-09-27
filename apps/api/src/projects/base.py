@@ -17,4 +17,8 @@ def build_model(project: Project) -> ProjectModel:
 
     if project.type == "data_center":
         return DataCenterProject(project.nominal_load_mw)
+    if project.type in ("housing", "ev_depot"):
+        from .loads import ProfileProject
+
+        return ProfileProject(project.hourly_profile)
     raise NotImplementedError(f"project type {project.type!r} is not implemented yet")

@@ -3,7 +3,9 @@
 export type Season = "winter" | "spring" | "summer" | "fall";
 export type Phase = "calm" | "stress" | "balancing" | "balanced";
 export interface Look { season: Season; night: number }
-export interface SimState { phase: Phase; active: { battery: boolean; ev: boolean; building: boolean }; dc: { x: number; y: number } | null; rise: number; t: number; dragging: boolean; hoverLot: number | null }
+export type LoadKind = "data_centre" | "housing" | "ev_depot";
+export interface PlacedLoad { id: string; kind: LoadKind; lot: number; rise: number }
+export interface SimState { phase: Phase; active: { battery: boolean; ev: boolean; building: boolean }; loads: PlacedLoad[]; t: number; dragging: boolean; hoverLot: number | null }
 export const W = 1440, H = 900;
 const TW = 64, TH = 32, OX = 720, OY = 246;
 export const P = (x: number, y: number): [number, number] => [OX + ((x - y) * TW) / 2, OY + ((x + y) * TH) / 2];
@@ -225,16 +227,17 @@ export function buildScene(season: Season): Scene {
 
 export function drawFrame(c: C, sc: Scene, st: SimState, lk: Look) {
   sc.ground(c, lk);
-  // empty lots (drop targets)
-  if (!st.dc || st.dragging) LOTS.forEach((l, i) => {
-    if (st.dc && !st.dragging) return;
+  // empty lots (drop targets): every free lot stays marked until it is used
+  const used = new Set(st.loads.map((l) => l.lot));
+  LOTS.forEach((l, i) => {
+    if (used.has(i)) return;
     const pts = [P(l.x, l.y), P(l.x + 2, l.y), P(l.x + 2, l.y + 2), P(l.x, l.y + 2)] as [number, number][];
     const hot = st.hoverLot === i;
     poly(c, pts, hot ? "rgba(242,167,46,.45)" : st.dragging ? "rgba(255,255,255,.34)" : "rgba(255,255,255,.22)", hot ? "#F2A72E" : "#FFFFFF", 2.4);
     if (!st.dragging) { const m = P(l.x + 1, l.y + 1); c.fillStyle = "#FBF7EE"; c.strokeStyle = "#1D2320"; c.lineWidth = 1.6; c.beginPath(); c.arc(m[0], m[1], 13, 0, 7); c.fill(); c.stroke(); c.lineWidth = 2.2; c.beginPath(); c.moveTo(m[0] - 6, m[1]); c.lineTo(m[0] + 6, m[1]); c.moveTo(m[0], m[1] - 6); c.lineTo(m[0], m[1] + 6); c.stroke(); }
   });
-  const dcObj: Obj[] = st.dc ? [{ k: st.dc.x + st.dc.y + 2.6, draw: (cc, s2, lk) => drawDC(cc, s2, lk) }] : [];
-  const list = dcObj.length ? [...sc.objs, ...dcObj].sort((a, b) => a.k - b.k) : sc.objs;
+  const loadObjs: Obj[] = st.loads.map((ld) => ({ k: LOTS[ld.lot].x + LOTS[ld.lot].y + 2.6, draw: (cc, s2, lk) => drawLoad(cc, s2, lk, ld) }));
+  const list = loadObjs.length ? [...sc.objs, ...loadObjs].sort((a, b) => a.k - b.k) : sc.objs;
   list.forEach((o) => o.draw(c, st, lk));
   drawLines(c, st, lk);
   if (lk.night > 0) { c.fillStyle = `rgba(14,22,56,${0.1 * lk.night})`; c.fillRect(0, 0, W, H); }
@@ -244,10 +247,13 @@ export function drawFrame(c: C, sc: Scene, st: SimState, lk: Look) {
     c.globalAlpha = 1;
   }
 }
-function drawDC(c: C, st: SimState, lk: Look) {
-  const d = st.dc; if (!d) return; const { x, y } = d, h = 38 * Math.min(1, st.rise);
+function drawLoad(c: C, st: SimState, lk: Look, ld: PlacedLoad) {
+  const { x, y } = LOTS[ld.lot];
+  if (ld.kind === "housing") return drawHousing(c, lk, x, y, ld.rise);
+  if (ld.kind === "ev_depot") return drawDepot(c, st, lk, x, y, ld.rise);
+  const h = 38 * Math.min(1, ld.rise);
   shadow(c, x, y, 2, 2, h); box(c, lk, x, y, 2, 2, h, "#7C8595", "#4F5666", "#3B4150");
-  if (st.rise < 1) return;
+  if (ld.rise < 1) return;
   const strip = st.phase === "stress" ? "#E5533D" : st.phase === "balancing" ? "#F2A72E" : "#3FD1A0";
   const q: [number, number][] = [P(x, y + 2), P(x + 2, y + 2), up(P(x + 2, y + 2), h), up(P(x, y + 2), h)];
   for (let k = 0; k < 4; k++) faceRect(c, lk, q, 0.08, 0.92, 0.14 + k * 0.2, 0.21 + k * 0.2, strip, true);
@@ -256,13 +262,33 @@ function drawDC(c: C, st: SimState, lk: Look) {
   ([[0.25, 0.25], [1.0, 0.3], [0.5, 1.0], [1.2, 1.1]] as const).forEach(([a, b]) => { box(c, lk, x + a, y + b, 0.5, 0.5, 7, "#DDE1E7", "#B3BAC5", "#98A0AD", h); const p = P(x + a + 0.25, y + b + 0.25); c.fillStyle = "#7C8595"; c.beginPath(); c.arc(p[0], p[1] - h - 9, 7, 0, 7); c.fill(); });
   if (st.phase === "stress") { const t = P(x + 1, y + 1); c.strokeStyle = `rgba(229,83,61,${0.7 - 0.3 * Math.sin(st.t / 5)})`; c.lineWidth = 3; c.beginPath(); c.ellipse(t[0], t[1] + 6, 70, 34, 0, 0, 7); c.stroke(); c.lineWidth = 2; c.globalAlpha = 0.4; c.beginPath(); c.ellipse(t[0], t[1] + 6, 92, 45, 0, 0, 7); c.stroke(); c.globalAlpha = 1; }
 }
+/** A new housing development: a 3 x 3 block of small homes (drawn units), rising with `rise`. */
+function drawHousing(c: C, lk: Look, x: number, y: number, rise: number) {
+  const rs = rng(31);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+    const k = i * 3 + j; if (k / 9 > rise) continue;
+    const hx = x + 0.1 + i * 0.62, hy = y + 0.1 + j * 0.62; const o = house(hx, hy, rs() < 0.6, k);
+    o.draw(c, { phase: "calm", active: { battery: false, ev: false, building: false }, loads: [], t: 0, dragging: false, hoverLot: null }, lk);
+  }
+}
+/** A new EV depot: a paved lot with chargers and parked cars (drawn units). Chargers amber when EV charging is being shifted. */
+function drawDepot(c: C, st: SimState, lk: Look, x: number, y: number, rise: number) {
+  poly(c, [P(x, y), P(x + 2, y), P(x + 2, y + 2), P(x, y + 2)], tone(lk, lk.season === "winter" ? "#D3D8DD" : "#A9A6A0"));
+  const cols = ["#1F9E89", "#5B9BE0", "#F0997B", "#E8C36A", "#8C7AE0", "#D4537E"];
+  for (let a = 0; a < 2; a++) for (let b = 0; b < 4; b++) {
+    if ((a * 4 + b) / 8 > rise) continue;
+    const cx = x + 0.2 + b * 0.45, cy = y + 0.35 + a * 0.9, p = P(cx, cy), paused = st.active.ev && (a + b) % 2 === 0;
+    c.fillStyle = tone(lk, "#4A4B4F"); c.fillRect(p[0] - 2, p[1] - 13, 4, 13); c.fillStyle = paused ? "#F2A72E" : "#1F9E89"; c.fillRect(p[0] - 3, p[1] - 17, 6, 5);
+    car(cx - 0.05, cy + 0.32, cols[(a * 4 + b) % 6], "y").draw(c, st, lk);
+  }
+}
 function drawLines(c: C, st: SimState, lk: Look) {
   const sub = P(6.5, 6.5), x1 = sub[0], y1 = sub[1] - 72;
   const targets: [string, [number, number]][] = [["homes", P(3, 3)], ["downtown", P(9.5, 2.4)], ["depot", P(2.6, 10)], ["industry", P(10, 9.4)]];
-  if (st.dc) targets.push(["dc", P(st.dc.x + 1, st.dc.y + 1)]);
+  st.loads.forEach((l) => targets.push([l.kind === "data_centre" ? "dc" : "load", P(LOTS[l.lot].x + 1, LOTS[l.lot].y + 1)]));
   targets.forEach(([name, q], i) => {
     const x2 = q[0], y2 = q[1] - 52, mx = (x1 + x2) / 2, my = Math.max(y1, y2) + 16;
-    const hot = st.phase === "stress" && (name === "dc" || name === "industry");
+    const hot = st.phase === "stress" && (name === "dc" || name === "industry" || name === "load");
     c.strokeStyle = tone(lk, hot ? "#E5533D" : st.phase === "stress" ? "#8A6A3A" : "#5A5B60"); c.lineWidth = hot ? 3.4 : 1.6;
     c.beginPath(); c.moveTo(x1, y1); c.quadraticCurveTo(mx, my, x2, y2); c.stroke();
     for (let k = 0; k < 5; k++) {

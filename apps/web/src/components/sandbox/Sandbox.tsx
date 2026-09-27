@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IsoWorld } from "@/components/iso/IsoWorld";
-import { ANCHORS, H, LOTS, W, lotAt, type Phase, type Season } from "@/components/iso/scene";
-import { fetchSandboxWorld, postSandboxRun, type DeviceParams, type Group, type SandboxRun, type SandboxWorldInfo, type ScriptStep } from "@/lib/sandbox";
+import { ANCHORS, H, W, lotAt, type Phase, type Season } from "@/components/iso/scene";
+import { fetchSandboxWorld, fetchWorldFor, postMatrix, postSandboxRun, type CellState, type DeviceParams, type Matrix, type SeasonCell, type Group, type LoadKind, type SandboxRun, type SandboxWorldInfo, type ScriptStep } from "@/lib/sandbox";
 import { changeNote, derivePhase, gaugeLoad, hourLabel, nightOf } from "@/lib/sandboxLogic";
 
 const INK = "#1D2320", PAPER = "#FBF7EE", LINE = "#D9D1BE", AMB = "#F2A72E", TEAL = "#1F9E89", CORAL = "#E5533D", BLUE = "#3F86D8", VIO = "#8C7AE0";
@@ -10,8 +10,15 @@ const FD = "var(--font-display), 'Bricolage Grotesque', system-ui, sans-serif", 
 const GROUP_COLOR: Record<Group, string> = { battery: BLUE, ev: TEAL, building: VIO };
 const DELAY: Record<ScriptStep["kind"], number> = { request: 1100, owner_offer: 130, owner_decline: 130, validation_fail: 520, revision: 200, accepted: 130, clearing: 1200, dispatch: 1500, done: 0 };
 const STEP_LABEL: Record<Group, string> = { battery: "Batteries discharge", ev: "EV charging shifted later", building: "Buildings and homes trim" };
+interface HistoryEntry { n: number; loads: { kind: LoadKind; size: number; lot: number }[]; params: DeviceParams; provider: "stub" | "openai"; season: Season; hour: number; outcome: SandboxRun["outcome"]; overloadMw: number; absorbedMw: number; remainingMw: number; source: string }
+interface Load { id: string; kind: LoadKind; size: number; lot: number }
+const LOAD_META: Record<LoadKind, { label: string; unit: string; def: number; min: number; max: number; step: number; blurb: string }> = {
+  data_centre: { label: "Data centre", unit: "MW", def: 20, min: 5, max: 60, step: 5, blurb: "runs 24/7" },
+  housing: { label: "Housing", unit: "homes", def: 1000, min: 200, max: 5000, step: 200, blurb: "evening peak" },
+  ev_depot: { label: "EV depot", unit: "chargers", def: 50, min: 10, max: 300, step: 10, blurb: "charges overnight" },
+};
 const SEASONS: Season[] = ["winter", "spring", "summer", "fall"];
-const DEFAULTS: DeviceParams = { fleetSizeX: 3, batteryReservePct: 25, ownersEnrolledPct: 100, minPriceScale: 1, evShiftablePct: 60, evMaxDelayH: 4, buildingOffsetC: 2, buildingMaxHours: 3, reboundPct: 70, dcFlexPct: 0, dcMaxDeferH: 3 };
+const DEFAULTS: DeviceParams = { fleetSizeX: 1, batteryCount: 60, evFleetCount: 42, buildingCount: 108, solarCount: 24, batteryReservePct: 25, ownersEnrolledPct: 100, minPriceScale: 1, evShiftablePct: 60, evMaxDelayH: 4, buildingOffsetC: 2, buildingMaxHours: 3, reboundPct: 70, dcFlexPct: 0, dcMaxDeferH: 3 };
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 function theme(dark: boolean) { return { bg: dark ? "rgba(22,28,40,.92)" : "rgba(251,247,238,.95)", fg: dark ? "#F4EFE2" : INK, mut: dark ? "#A9B3C4" : "#6A6F66", ln: dark ? "#33405A" : LINE, sub: dark ? "rgba(255,255,255,.08)" : "rgba(29,35,32,.07)", dark }; }
@@ -27,8 +34,16 @@ export function Sandbox() {
   const [err, setErr] = useState<string | null>(null);
   const [season, setSeason] = useState<Season>("summer");
   const [hour, setHour] = useState(14);
-  const [dcMw, setDcMw] = useState(20);
-  const [lot, setLot] = useState<number | null>(null);
+  const [loads, setLoads] = useState<Load[]>([]);
+  const [dragKind, setDragKind] = useState<LoadKind>("data_centre");
+  const [trayOpen, setTrayOpen] = useState(false);
+  const [tab, setTab] = useState<"result" | "seasons" | "history">("result");
+  const [matrix, setMatrix] = useState<{ key: string; data: Matrix } | null>(null);
+  const [matrixBusy, setMatrixBusy] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const histN = useRef(0);
+  const [devWorld, setDevWorld] = useState<SandboxWorldInfo | null>(null);
+  const nextId = useRef(1);
   const [params, setParams] = useState<DeviceParams>(DEFAULTS);
   const [provider, setProvider] = useState<"stub" | "openai">("stub");
   const [run, setRun] = useState<SandboxRun | null>(null);
@@ -58,17 +73,39 @@ export function Sandbox() {
 
   // one real run per (drop, size, season, hour, device parameters); debounced; stale responses are ignored
   useEffect(() => {
-    if (lot === null || !world) return;
+    if (loads.length === 0 || !world) return;
     const id = ++reqId.current;
     const h = setTimeout(() => {
       setBusy(true); setRun(null); setProg(0);
-      postSandboxRun({ season, hour, dcMw, provider, incentivePerMwh: 100, deviceParams: params })
-        .then((r) => { if (id === reqId.current) { const o = lastDone.current; setPrev(o); setRun(r); setProg(0); setErr(null); } })
+      postSandboxRun({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), provider, incentivePerMwh: 100, deviceParams: params })
+        .then((r) => { if (id === reqId.current) { const o = lastDone.current; setPrev(o); setRun(r); setProg(0); setErr(null); setTab("result");
+          setHistory((h) => [...h, { n: ++histN.current, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), params, provider, season, hour, outcome: r.outcome, overloadMw: r.overloadMw, absorbedMw: r.absorbedMw, remainingMw: r.remainingMw, source: r.decisionSource }]); } })
         .catch((e) => id === reqId.current && setErr(String(e)))
         .finally(() => id === reqId.current && setBusy(false));
     }, 350);
     return () => clearTimeout(h);
-  }, [lot, season, hour, dcMw, params, provider, world, retry]);
+  }, [loads, season, hour, params, provider, world, retry]);
+
+  // the season test: the same loads and settings against each season's real day (fetched when the Seasons tab is open)
+  const cfgKey = JSON.stringify([loads.map((l) => [l.kind, l.size]), params, provider]);
+  useEffect(() => {
+    if (tab !== "seasons" || loads.length === 0 || (matrix && matrix.key === cfgKey)) return;
+    let live = true;
+    const h = setTimeout(() => {
+      setMatrixBusy(true);
+      postMatrix({ loads: loads.map((l) => ({ kind: l.kind, size: l.size })), provider, incentivePerMwh: 100, deviceParams: params })
+        .then((d) => live && setMatrix({ key: cfgKey, data: d }))
+        .catch((e) => live && setErr(String(e.message ?? e)))
+        .finally(() => live && setMatrixBusy(false));
+    }, 200);
+    return () => { live = false; clearTimeout(h); };
+  }, [tab, cfgKey, loads, provider, params, matrix]);
+
+  // real totals for the device configuration the user built (debounced)
+  useEffect(() => {
+    const h = setTimeout(() => { fetchWorldFor(params).then(setDevWorld).catch(() => undefined); }, 250);
+    return () => clearTimeout(h);
+  }, [params]);
 
   // playback: reveal the recorded script step by step
   const steps = useMemo(() => run?.script ?? [], [run]);
@@ -91,27 +128,26 @@ export function Sandbox() {
   const capacity = world?.capacityMw ?? 90;
   const cleared = visible.some((s) => s.kind === "clearing");
   const lastDispatch = [...visible].reverse().find((s) => s.kind === "dispatch");
-  const loadNow = gaugeLoad({ run, placed: lot !== null, finished, lastDispatchLoad: lastDispatch?.loadAfterMw, base, dcMw });
-  const phase: Phase = derivePhase({ run, placed: lot !== null, finished, cleared, capacity });
+  const loadNow = gaugeLoad({ run, placed: loads.length > 0, finished, lastDispatchLoad: lastDispatch?.loadAfterMw, base, dcMw: loads.filter((l) => l.kind === "data_centre").reduce((a, l) => a + l.size, 0) });
+  const phase: Phase = derivePhase({ run, placed: loads.length > 0, finished, cleared, capacity });
   const active = useMemo(() => {
     const a = { battery: false, ev: false, building: false };
     if (run && !finished) visible.forEach((s) => { if (s.kind === "dispatch" && s.group && (s.mw ?? 0) > 0.005) a[s.group] = true; });
     return a;
   }, [run, finished, visible]);
   const night = nightOf(hour), t = theme(night > 0.5);
-  const dc = lot !== null ? { x: LOTS[lot].x, y: LOTS[lot].y } : null;
 
   // drag and drop from the tray
   const toStage = useCallback((cx: number, cy: number) => { const r = stage.current!.getBoundingClientRect(); return { x: (cx - r.left) / scale, y: (cy - r.top) / scale }; }, [scale]);
   useEffect(() => {
     if (!drag) return;
     const mv = (e: PointerEvent) => { const p = toStage(e.clientX, e.clientY); setDrag(p); setHoverLot(lotAt(p.x, p.y)); };
-    const up = (e: PointerEvent) => { const p = toStage(e.clientX, e.clientY); const l = lotAt(p.x, p.y); setDrag(null); setHoverLot(null); if (l !== null) { setLot(l); setDrawer(false); } };
+    const up = (e: PointerEvent) => { const p = toStage(e.clientX, e.clientY); const l = lotAt(p.x, p.y); setDrag(null); setHoverLot(null); if (l !== null) { setLoads((cur) => cur.some((x) => x.lot === l) ? cur : [...cur, { id: `l${nextId.current++}`, kind: dragKind, size: LOAD_META[dragKind].def, lot: l }]); setDrawer(false); setTrayOpen(false); } };
     window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
-  }, [drag, toStage]);
+  }, [drag, toStage, dragKind]);
 
-  const reset = () => { reqId.current++; setLot(null); setRun(null); setProg(0); setBusy(false); setPrev(null); lastDone.current = null; setErr(null); setInspect(null); };
+  const reset = () => { reqId.current++; setLoads([]); setRun(null); setProg(0); setBusy(false); setPrev(null); lastDone.current = null; setErr(null); setInspect(null); };
   const setP = (k: keyof DeviceParams, v: number) => setParams((p) => ({ ...p, [k]: v }));
 
   if (err && !world) return (
@@ -125,7 +161,7 @@ export function Sandbox() {
     </main>
   );
 
-  const caption = !world ? "Loading the world…" : busy ? "Asking the flexible devices for help…" : last ? last.text : lot !== null ? "Data centre added. Checking the grid…" : `${(world.devices.battery + world.devices.ev_fleet + world.devices.building + world.devices.solar)} device clusters are following their routines. Drag the data centre onto an empty lot.`;
+  const caption = !world ? "Loading the world…" : busy ? "Asking the flexible devices for help…" : last ? last.text : loads.length > 0 ? "Loads added. Checking the grid…" : `${(devWorld ?? world).devices.battery + (devWorld ?? world).devices.ev_fleet + (devWorld ?? world).devices.building + (devWorld ?? world).devices.solar} device clusters are following their routines. Drag a new load onto an empty lot.`;
   const over = loadNow > capacity + 0.05;
 
   return (
@@ -133,7 +169,7 @@ export function Sandbox() {
       <div style={{ width: W * scale, height: H * scale, position: "relative" }}>
         <div ref={stage} style={{ position: "absolute", left: 0, top: 0, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "0 0", overflow: "hidden", background: "#B4D688", fontFamily: FB }}>
           <div onClick={(e) => { const p = toStage(e.clientX, e.clientY); const hit = ([["battery", ANCHORS.battery], ["ev", ANCHORS.ev], ["building", ANCHORS.building]] as [Group, [number, number]][]).find(([, a]) => Math.hypot(p.x - a[0], p.y - 30 - a[1]) < 90); if (hit) { setInspect(hit[0]); setDrawer(false); } }} style={{ position: "absolute", inset: 0 }} aria-hidden="true" />
-          <IsoWorld season={season} night={night} phase={phase} active={active} dc={dc} dragging={!!drag} hoverLot={hoverLot} />
+          <IsoWorld season={season} night={night} phase={phase} active={active} loads={loads} dragging={!!drag} hoverLot={hoverLot} />
 
           {/* brand + provenance */}
           <Card t={t} x={24} y={24} w={352} h={104}>
@@ -148,7 +184,7 @@ export function Sandbox() {
 
           {/* gauge */}
           <Card t={t} x={24} y={144} w={352} h={150}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: t.mut }}><span>{cap(season)} · {run ? run.dateUsed : world?.seasons[season].referenceDay ?? ""} · {hourLabel(hour)}</span><span>{world ? world.devices.battery + world.devices.ev_fleet + world.devices.building + world.devices.solar : 0} device clusters</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: t.mut }}><span>{cap(season)} · {run ? run.dateUsed : world?.seasons[season].referenceDay ?? ""} · {hourLabel(hour)}</span><span>{devWorld ? devWorld.devices.battery + devWorld.devices.ev_fleet + devWorld.devices.building + devWorld.devices.solar : 0} device clusters</span></div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}><span style={{ fontFamily: FD, fontWeight: 700, fontSize: 46, lineHeight: 1, letterSpacing: -1, fontVariantNumeric: "tabular-nums" }}>{loadNow.toFixed(1)}</span><span style={{ fontSize: 14, color: t.mut }}>MW of {capacity} MW</span></div>
             <div style={{ position: "relative", height: 12, borderRadius: 6, background: t.sub, marginTop: 12 }}>
               <div style={{ position: "absolute", left: 0, top: 0, height: 12, width: `${Math.min(100, (loadNow / 120) * 100)}%`, borderRadius: 6, background: over ? CORAL : loadNow > capacity * 0.85 ? AMB : TEAL, transition: "width .5s" }} />
@@ -161,10 +197,13 @@ export function Sandbox() {
 
           {/* right column: tray -> steps -> result; drawer on top */}
           {inspect && !drawer && <Inspector t={t} world={world} which={inspect} run={run} fleet={params.fleetSizeX} close={() => setInspect(null)} />}
-          {!inspect && !run && !busy && !drawer && <Tray t={t} world={world} dcMw={dcMw} setDcMw={setDcMw} placed={lot !== null} onInspect={setInspect} onStart={(e) => setDrag(toStage(e.clientX, e.clientY))} onKey={() => setLot(1)} onEdit={() => setDrawer(true)} reset={reset} />}
-          {!inspect && (busy || (run && !finished)) && !drawer && <Steps t={t} run={run} visible={visible} busy={busy} skip={() => setProg(steps.length)} />}
-          {!inspect && run && finished && !drawer && <Result t={t} run={run} note={changeNote(prev, run)} onEdit={() => setDrawer(true)} onSeason={(s) => { setSeason(s); setHour(s === "winter" ? 18 : 14); }} reset={reset} />}
-          {drawer && <Drawer t={t} params={params} setP={setP} provider={provider} setProvider={setProvider} dcMw={dcMw} setDcMw={setDcMw} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
+          {!inspect && !drawer && (trayOpen || (!run && !busy)) && <Tray t={t} world={devWorld ?? world} loads={loads} setLoads={setLoads} onInspect={setInspect} onStart={(e, k) => { setDragKind(k); setDrag(toStage(e.clientX, e.clientY)); }} onKey={(k) => setLoads((cur) => { const free = [0, 1, 2, 3].find((i) => !cur.some((x) => x.lot === i)); return free === undefined ? cur : [...cur, { id: `l${nextId.current++}`, kind: k, size: LOAD_META[k].def, lot: free }]; })} onEdit={() => setDrawer(true)} reset={reset} />}
+          {!inspect && !trayOpen && (busy || (run && !finished)) && !drawer && <Steps t={t} run={run} visible={visible} busy={busy} skip={() => setProg(steps.length)} />}
+          {!inspect && !trayOpen && !drawer && run && (finished || tab !== "result") && <Tabs t={t} tab={tab} setTab={setTab} count={history.length} />}
+          {!inspect && !trayOpen && !drawer && tab === "seasons" && run && (finished || true) && <Seasons t={t} matrix={matrix && matrix.key === cfgKey ? matrix.data : null} busy={matrixBusy} capacity={capacity} onPick={(c) => { setSeason(c.season); setHour(c.peakHour); setTab("result"); }} />}
+          {!inspect && !trayOpen && !drawer && tab === "history" && <History t={t} history={history} onRestore={(h) => { setLoads(h.loads.map((l) => ({ id: `l${nextId.current++}`, kind: l.kind, size: l.size, lot: l.lot }))); setParams(h.params); setProvider(h.provider); setSeason(h.season); setHour(h.hour); setTab("result"); }} />}
+          {!inspect && !trayOpen && !drawer && tab === "result" && run && finished && <Result t={t} run={run} note={changeNote(prev, run)} onLoads={() => setTrayOpen(true)} onEdit={() => setDrawer(true)} onSeason={(s) => { setSeason(s); setHour(s === "winter" ? 18 : 14); }} reset={reset} />}
+          {drawer && <Drawer t={t} params={params} setP={setP} provider={provider} setProvider={setProvider} world={devWorld ?? world} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
 
           {/* owner speech bubbles anchored to the real device groups */}
           {run && !finished && (["battery", "ev", "building"] as Group[]).map((g, gi) => {
@@ -176,7 +215,13 @@ export function Sandbox() {
               <div style={{ position: "absolute", left: 111, bottom: -7, width: 14, height: 14, transform: "rotate(45deg)", background: PAPER, borderRight: `1px solid ${LINE}`, borderBottom: `1px solid ${LINE}` }} />
             </div>;
           })}
-          {phase === "stress" && !busy && lot !== null && <div style={{ position: "absolute", left: ANCHORS.substation[0] - 92, top: ANCHORS.substation[1] - 138, padding: "6px 12px", borderRadius: 10, background: CORAL, color: "#fff", fontSize: 13, fontWeight: 600 }}>Substation overloaded</div>}
+          {phase === "stress" && !busy && loads.length > 0 && <div style={{ position: "absolute", left: ANCHORS.substation[0] - 92, top: ANCHORS.substation[1] - 138, padding: "6px 12px", borderRadius: 10, background: CORAL, color: "#fff", fontSize: 13, fontWeight: 600 }}>Substation overloaded</div>}
+
+          {/* dock: always available, so more loads can be dropped at any time */}
+          {loads.length < 4 && <div style={{ position: "absolute", left: 24, top: 712, height: 64, padding: "0 12px", borderRadius: 16, background: t.bg, border: `1px solid ${t.ln}`, color: t.fg, display: "flex", alignItems: "center", gap: 10, fontFamily: FB }}>
+            <span style={{ fontSize: 12, color: t.mut }}>Drop a load</span>
+            {(Object.keys(LOAD_META) as LoadKind[]).map((k) => <div key={k} role="button" tabIndex={0} aria-label={`Dock: ${LOAD_META[k].label}`} onPointerDown={(e) => { e.preventDefault(); setDragKind(k); setDrag(toStage(e.clientX, e.clientY)); }} style={{ padding: "6px 12px", borderRadius: 10, border: `2px dashed ${AMB}`, background: "rgba(242,167,46,.12)", cursor: "grab", fontSize: 13, fontWeight: 600, userSelect: "none", touchAction: "none" }}>{LOAD_META[k].label}</div>)}
+          </div>}
 
           {/* bottom bar: caption + conditions */}
           <Card t={t} x={24} y={792} w={1392} h={84} pad={14}>
@@ -198,7 +243,7 @@ export function Sandbox() {
             </div>
           </Card>
 
-          {drag && <div style={{ position: "absolute", left: drag.x + 10, top: drag.y + 10, padding: "6px 10px", borderRadius: 8, background: "#2C2C2A", color: "#F1EFE8", fontSize: 12, pointerEvents: "none" }}>Data centre · {dcMw} MW</div>}
+          {drag && <div style={{ position: "absolute", left: drag.x + 10, top: drag.y + 10, padding: "6px 10px", borderRadius: 8, background: "#2C2C2A", color: "#F1EFE8", fontSize: 12, pointerEvents: "none" }}>{LOAD_META[dragKind].label} · {LOAD_META[dragKind].def.toLocaleString()} {LOAD_META[dragKind].unit}</div>}
           {err && world && <div role="alert" style={{ position: "absolute", left: 400, top: 24, padding: "10px 14px", borderRadius: 10, background: CORAL, color: "#fff", fontSize: 13, display: "flex", gap: 12, alignItems: "center" }}>{err}<button onClick={() => { setErr(null); setRetry((n) => n + 1); }} style={{ height: 28, padding: "0 12px", borderRadius: 14, border: 0, background: "#fff", color: CORAL, fontWeight: 600, cursor: "pointer" }}>Try again</button></div>}
           {!world && <div role="status" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(251,247,238,.75)", fontFamily: FD, fontSize: 22, fontWeight: 700 }}>Waking up the town…</div>}
         </div>
@@ -207,26 +252,38 @@ export function Sandbox() {
   );
 }
 
-function Tray({ t, world, dcMw, setDcMw, placed, onStart, onKey, onEdit, reset, onInspect }: { onInspect: (g: Group | "solar") => void; t: T; world: SandboxWorldInfo | null; dcMw: number; setDcMw: (n: number) => void; placed: boolean; onStart: (e: React.PointerEvent) => void; onKey: () => void; onEdit: () => void; reset: () => void }) {
+function Tray({ t, world, loads, setLoads, onStart, onKey, onEdit, reset, onInspect }: { onInspect: (g: Group | "solar") => void; t: T; world: SandboxWorldInfo | null; loads: Load[]; setLoads: React.Dispatch<React.SetStateAction<Load[]>>; onStart: (e: React.PointerEvent, k: LoadKind) => void; onKey: (k: LoadKind) => void; onEdit: () => void; reset: () => void }) {
   const d = world?.devices; const rows: [string, string, number, Group | "solar"][] = [[BLUE, "Batteries", d?.battery ?? 0, "battery"], [TEAL, "EV fleets", d?.ev_fleet ?? 0, "ev"], [VIO, "Buildings", d?.building ?? 0, "building"], ["#22345A", "Solar", d?.solar ?? 0, "solar"]];
+  const icon: Record<LoadKind, string> = { data_centre: "M4 3h16v18H4zM8 8h8M8 12h8M8 16h8", housing: "M3 11l9-7 9 7v9H3zM9 20v-6h6v6", ev_depot: "M13 2L4 14h7l-1 8 9-12h-7z" };
   return (
-    <Card t={t} x={1096} y={24} w={320} h={420}>
-      <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17, marginBottom: 10 }}>Add to the world</div>
-      <div role="button" tabIndex={0} aria-label="Data centre. Drag onto an empty lot, or press Enter to place it" onPointerDown={(e) => { e.preventDefault(); onStart(e); }} onKeyDown={(e) => e.key === "Enter" && onKey()}
-        style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, border: `2px dashed ${AMB}`, background: "rgba(242,167,46,.12)", cursor: "grab", touchAction: "none", userSelect: "none" }}>
-        <div style={{ width: 40, height: 40, borderRadius: 10, background: "#4F5666", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F4EFE2" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h8" /></svg></div>
-        <div style={{ flexGrow: 1 }}><div style={{ fontWeight: 600, fontSize: 15 }}>Data centre</div><div style={{ fontSize: 12, color: t.mut }}>{dcMw} MW · runs 24/7</div></div>
+    <Card t={t} x={1096} y={24} w={320} h={loads.length > 2 ? 640 : 560}>
+      <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17, marginBottom: 8 }}>Add new loads</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+        {(Object.keys(LOAD_META) as LoadKind[]).map((k) => (
+          <div key={k} role="button" tabIndex={0} aria-label={`${LOAD_META[k].label}. Drag onto an empty lot, or press Enter to place it`} onPointerDown={(e) => { e.preventDefault(); onStart(e, k); }} onKeyDown={(e) => e.key === "Enter" && onKey(k)}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 4px", borderRadius: 12, border: `2px dashed ${AMB}`, background: "rgba(242,167,46,.12)", cursor: "grab", touchAction: "none", userSelect: "none", textAlign: "center" }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={t.fg} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={icon[k]} /></svg>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{LOAD_META[k].label}</div><div style={{ fontSize: 11, color: t.mut }}>{LOAD_META[k].def.toLocaleString()} {LOAD_META[k].unit}</div>
+          </div>))}
       </div>
-      <div style={{ fontSize: 12, color: t.mut, marginTop: 10 }}>{placed ? "Placed. Drag again to move it." : "Drag onto a highlighted empty lot"}</div>
-      <label style={{ display: "block", marginTop: 12, fontSize: 13 }}>Size <b style={{ fontWeight: 600 }}>{dcMw} MW</b><input type="range" min={5} max={60} value={dcMw} onChange={(e) => setDcMw(+e.target.value)} style={{ width: "100%", accentColor: TEAL }} aria-label="Data centre size in megawatts" /></label>
+      <div style={{ fontSize: 12, color: t.mut, marginTop: 8 }}>Drag onto a highlighted empty lot (4 lots).</div>
+      {loads.length > 0 && <div style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 11, letterSpacing: ".06em", textTransform: "uppercase", color: t.mut }}>Your loads</div>
+        {loads.map((l) => { const m = LOAD_META[l.kind]; return (
+          <div key={l.id} style={{ padding: "6px 0", borderTop: `1px solid ${t.ln}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}><span>{m.label} <b style={{ fontWeight: 600 }}>{l.size.toLocaleString()} {m.unit}</b></span>
+              <button onClick={() => setLoads((cur) => cur.filter((x) => x.id !== l.id))} aria-label={`Remove ${m.label}`} style={{ border: 0, background: t.sub, color: t.fg, width: 24, height: 24, borderRadius: 12, cursor: "pointer" }}>×</button></div>
+            <input type="range" min={m.min} max={m.max} step={m.step} value={l.size} aria-label={`${m.label} size`} onChange={(e) => setLoads((cur) => cur.map((x) => x.id === l.id ? { ...x, size: +e.target.value } : x))} style={{ width: "100%", accentColor: TEAL }} />
+          </div>); })}
+      </div>}
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <button onClick={onEdit} style={{ height: 34, padding: "0 14px", borderRadius: 17, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Edit the devices</button>
-        {placed && <button onClick={reset} style={{ height: 34, padding: "0 14px", borderRadius: 17, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontSize: 13, cursor: "pointer" }}>Reset</button>}
+        {loads.length > 0 && <button onClick={reset} style={{ height: 34, padding: "0 14px", borderRadius: 17, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontSize: 13, cursor: "pointer" }}>Reset</button>}
       </div>
-      <div style={{ height: 1, background: t.ln, margin: "14px 0" }} />
-      <div style={{ fontSize: 11, letterSpacing: ".06em", textTransform: "uppercase", color: t.mut, marginBottom: 6 }}>Device fleets (synthetic)</div>
-      {rows.map(([c, n, v, g]) => <button key={n} onClick={() => onInspect(g)} aria-label={`Inspect ${n}`} style={{ display: "flex", alignItems: "center", gap: 8, height: 26, fontSize: 13, width: "100%", border: 0, background: "transparent", color: t.fg, cursor: "pointer", padding: 0, textAlign: "left" }}><span style={{ width: 10, height: 10, borderRadius: 3, background: c }} /><span style={{ flexGrow: 1 }}>{n}</span><span style={{ color: t.mut }}>{v} clusters ›</span></button>)}
-      <div style={{ fontSize: 11, color: t.mut, marginTop: 8, lineHeight: 1.4 }}>Each cluster stands for many real-world units. {world?.ownerCount ?? 18} modeled owners control them.</div>
+      <div style={{ height: 1, background: t.ln, margin: "12px 0" }} />
+      <div style={{ fontSize: 11, letterSpacing: ".06em", textTransform: "uppercase", color: t.mut, marginBottom: 4 }}>Device clusters (modeled)</div>
+      {rows.map(([c, n, v, g]) => <button key={n} onClick={() => onInspect(g)} aria-label={`Inspect ${n}`} style={{ display: "flex", alignItems: "center", gap: 8, height: 26, fontSize: 13, width: "100%", border: 0, background: "transparent", color: t.fg, cursor: "pointer", padding: 0, textAlign: "left" }}><span style={{ width: 10, height: 10, borderRadius: 3, background: c }} /><span style={{ flexGrow: 1 }}>{n}</span><span style={{ color: t.mut }}>{v} ›</span></button>)}
+      <div style={{ fontSize: 11, color: t.mut, marginTop: 6, lineHeight: 1.4 }}>Each is a seeded model with its own size and limits. {world?.ownerCount ?? 18} modeled owners control them. Change the counts in the editor.</div>
     </Card>
   );
 }
@@ -253,7 +310,7 @@ function Steps({ t, run, visible, busy, skip }: { t: T; run: SandboxRun | null; 
   );
 }
 
-function Result({ t, run, note, onEdit, onSeason, reset }: { note: string | null; t: T; run: SandboxRun; onEdit: () => void; onSeason: (s: Season) => void; reset: () => void }) {
+function Result({ t, run, note, onEdit, onLoads, onSeason, reset }: { onLoads: () => void; note: string | null; t: T; run: SandboxRun; onEdit: () => void; onSeason: (s: Season) => void; reset: () => void }) {
   const groups: [Group, string][] = [["battery", "Batteries"], ["ev", "EV charging shifted"], ["building", "Buildings and homes"]];
   const vals = groups.map(([g, n]) => ({ g, n, v: Math.max(0, run.dispatchByGroup[g] ?? 0) }));
   const tot = Math.max(run.overloadMw, 0.001);
@@ -261,8 +318,9 @@ function Result({ t, run, note, onEdit, onSeason, reset }: { note: string | null
   const lo = 50, hi = Math.max(110, ...run.curve.before), y = (v: number) => 150 - ((v - lo) / (hi - lo)) * 130, x = (h: number) => 20 + h * 12.2;
   const line = (a: number[]) => a.map((v, h) => `${x(h).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   return (
-    <Card t={t} x={1096} y={24} w={320} h={744}>
+    <Card t={t} x={1096} y={66} w={320} h={702}>
       <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>What the flexible grid did</div>
+      <div style={{ fontSize: 12, color: t.mut, marginTop: 2 }}>{run.loads.map((l) => `${LOAD_META[l.kind].label} ${l.size.toLocaleString()} ${LOAD_META[l.kind].unit}`).join(" + ")}</div>
       {run.hasOverload ? <>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 10 }}><span style={{ fontFamily: FD, fontWeight: 700, fontSize: 40, lineHeight: 1 }}>{run.absorbedMw.toFixed(1)}</span><span style={{ fontSize: 14, color: t.mut }}>of {run.overloadMw.toFixed(1)} MW overload absorbed</span></div>
         <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><Pill bg={chip[1]} fg={chip[2]}>{chip[0]}</Pill>{note && <span style={{ fontSize: 12, color: t.mut }}>{note}</span>}</div>
@@ -281,7 +339,7 @@ function Result({ t, run, note, onEdit, onSeason, reset }: { note: string | null
       </svg>
       {run.hasOverload && <div style={{ fontSize: 12, color: t.mut, marginTop: 6, lineHeight: 1.4 }}>{run.outcomeText}</div>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-        {([["Edit the devices", onEdit, true], [run.season === "winter" ? "Try summer" : "Try winter", () => onSeason(run.season === "winter" ? "summer" : "winter"), false], ["Reset", reset, false]] as const).map(([l, f, p]) => <button key={l} onClick={f} style={{ height: 38, padding: "0 14px", borderRadius: 19, fontSize: 13, fontWeight: 600, cursor: "pointer", background: p ? t.fg : "transparent", color: p ? (t.dark ? INK : PAPER) : t.fg, border: `1px solid ${p ? t.fg : t.ln}` }}>{l}</button>)}
+        {([["Edit loads", onLoads, true], ["Edit the devices", onEdit, false], [run.season === "winter" ? "Try summer" : "Try winter", () => onSeason(run.season === "winter" ? "summer" : "winter"), false], ["Reset", reset, false]] as const).map(([l, f, p]) => <button key={l} onClick={f} style={{ height: 38, padding: "0 14px", borderRadius: 19, fontSize: 13, fontWeight: 600, cursor: "pointer", background: p ? t.fg : "transparent", color: p ? (t.dark ? INK : PAPER) : t.fg, border: `1px solid ${p ? t.fg : t.ln}` }}>{l}</button>)}
       </div>
       <div style={{ fontSize: 11, color: t.mut, marginTop: 10, lineHeight: 1.4 }}>Owner decisions: {run.decisionSource.replace(/_/g, " ")} · physical checks {run.checksPassed ? "passed" : "FAILED"}. Simulation on the real demand shape with synthetic devices. Not a forecast or an engineering study.</div>
     </Card>
@@ -292,14 +350,19 @@ function Slider({ t, label, value, min, max, step, unit, set, note }: { t: T; la
   return <label style={{ display: "block", marginTop: 8 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span>{label}</span><b style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}{unit}</b></div>
     <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => set(+e.target.value)} style={{ width: "100%", accentColor: TEAL, margin: "4px 0 0" }} aria-label={label} />{note && <div style={{ fontSize: 11, color: t.mut }}>{note}</div>}</label>;
 }
-function Drawer({ t, params: p, setP, provider, setProvider, dcMw, setDcMw, close, defaults }: { t: T; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; dcMw: number; setDcMw: (n: number) => void; close: () => void; defaults: DeviceParams }) {
+function Drawer({ t, params: p, setP, provider, setProvider, world, close, defaults }: { t: T; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; world: SandboxWorldInfo | null; close: () => void; defaults: DeviceParams }) {
   const sec = (title: string, sub: string) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 10, borderTop: `1px solid ${t.ln}` }}><b style={{ fontFamily: FD, fontSize: 15 }}>{title}</b><span style={{ fontSize: 11, color: t.mut }}>{sub}</span></div>;
+  const dd = world?.deviceDetails;
   return (
     <Card t={t} x={1096} y={24} w={320} h={744} pad={16}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Edit how devices behave</div><button onClick={close} aria-label="Close editor" style={{ border: 0, background: t.sub, color: t.fg, width: 28, height: 28, borderRadius: 14, cursor: "pointer" }}>×</button></div>
-      <div style={{ fontSize: 12, color: t.mut, marginTop: 2 }}>Applies on the next rebalance. Assumptions, not measurements.</div>
-      {sec("Flexible fleet", "how much can move")}
-      <Slider t={t} label="Fleet size (× calibrated)" value={p.fleetSizeX} min={1} max={5} step={0.5} unit="×" set={(v) => setP("fleetSizeX", v)} note="1× = up to 25% of load is controllable" />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Edit the devices</div><button onClick={close} aria-label="Close editor" style={{ border: 0, background: t.sub, color: t.fg, width: 28, height: 28, borderRadius: 14, cursor: "pointer" }}>×</button></div>
+      <div style={{ fontSize: 12, color: t.mut, marginTop: 2 }}>Applies on the next run. Assumptions, not measurements.</div>
+      {sec("How many", "modeled clusters")}
+      <Slider t={t} label="Batteries" value={p.batteryCount} min={0} max={200} step={5} unit="" set={(v) => setP("batteryCount", v)} note={dd ? `${dd.battery.totalMw} MW · ${dd.battery.totalMwh} MWh` : undefined} />
+      <Slider t={t} label="EV charging fleets" value={p.evFleetCount} min={0} max={150} step={2} unit="" set={(v) => setP("evFleetCount", v)} note={dd ? `${dd.ev.totalMw} MW chargers · ${(dd.ev.vehicles ?? 0).toLocaleString()} vehicles` : undefined} />
+      <Slider t={t} label="Buildings and homes" value={p.buildingCount} min={0} max={300} step={6} unit="" set={(v) => setP("buildingCount", v)} note={dd ? `${dd.building.totalMw} MW controllable load` : undefined} />
+      <Slider t={t} label="Solar" value={p.solarCount} min={0} max={80} step={2} unit="" set={(v) => setP("solarCount", v)} note="context only, never dispatched" />
+      {sec("Owners", "who decides")}
       <Slider t={t} label="Owners enrolled" value={p.ownersEnrolledPct} min={10} max={100} step={10} unit="%" set={(v) => setP("ownersEnrolledPct", v)} />
       <Slider t={t} label="Owners' minimum price" value={p.minPriceScale} min={0.5} max={2} step={0.25} unit="×" set={(v) => setP("minPriceScale", v)} />
       {sec("Batteries", "reserve")}
@@ -310,9 +373,7 @@ function Drawer({ t, params: p, setP, provider, setProvider, dcMw, setDcMw, clos
       <Slider t={t} label="Temperature offset allowed" value={p.buildingOffsetC} min={0.5} max={4} step={0.5} unit="°C" set={(v) => setP("buildingOffsetC", v)} />
       <Slider t={t} label="Longest curtailment" value={p.buildingMaxHours} min={1} max={6} step={1} unit=" h" set={(v) => setP("buildingMaxHours", v)} />
       <Slider t={t} label="Rebound afterwards" value={p.reboundPct} min={30} max={100} step={10} unit="%" set={(v) => setP("reboundPct", v)} />
-      {sec("Data centre", "hypothetical")}
-      <Slider t={t} label="Size" value={dcMw} min={5} max={60} step={5} unit=" MW" set={setDcMw} />
-      <div style={{ fontSize: 12, color: t.mut, marginTop: 8 }}>Flexible compute share: next (not modeled yet).</div>
+      <div style={{ fontSize: 12, color: t.mut, marginTop: 10 }}>Load sizes are set on each load in the tray. A data centre&apos;s own flexible compute: next.</div>
       {sec("Owner agents", "who decides")}
       <select value={provider} onChange={(e) => setProvider(e.target.value as "stub" | "openai")} aria-label="Owner agent provider" style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${t.ln}`, background: t.sub, color: t.fg, marginTop: 8, padding: "0 8px" }}>
         <option value="stub">Deterministic stub (no API)</option><option value="openai">Real LLM owners (OpenAI, needs a key)</option>
@@ -340,6 +401,62 @@ function Inspector({ t, world, which, run, fleet, close }: { t: T; world: Sandbo
       {now != null && row("This run, at the chosen hour", `${now > 0.005 ? "-" : ""}${Math.abs(now).toFixed(1)} MW`)}
       <div style={{ fontSize: 12, color: t.mut, marginTop: 10, lineHeight: 1.45 }}><b style={{ fontWeight: 600 }}>Limits.</b> {d.limits}</div>
       <div style={{ fontSize: 11, color: t.mut, marginTop: 8 }}>Synthetic and seeded. A cluster stands for many units.</div>
+    </Card>
+  );
+}
+
+function Tabs({ t, tab, setTab, count }: { t: T; tab: "result" | "seasons" | "history"; setTab: (x: "result" | "seasons" | "history") => void; count: number }) {
+  const items: ["result" | "seasons" | "history", string][] = [["result", "Result"], ["seasons", "Seasons"], ["history", `Runs (${count})`]];
+  return <div role="tablist" style={{ position: "absolute", left: 1096, top: 24, width: 320, display: "flex", gap: 6 }}>
+    {items.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} style={{ flex: 1, height: 34, borderRadius: 17, fontSize: 13, fontWeight: 600, cursor: "pointer", border: `1px solid ${tab === k ? "transparent" : t.ln}`, background: tab === k ? t.fg : t.bg, color: tab === k ? (t.dark ? INK : PAPER) : t.fg }}>{l}</button>)}
+  </div>;
+}
+
+const CELL_COLOR: Record<CellState, string> = { within: "#B9D9CE", absorbed: TEAL, over: CORAL };
+const OUT_CHIP: Record<string, [string, string, string]> = { holds: ["Holds", "#CDEFE6", "#0B5C4C"], partly_holds: ["Partly holds", "#FCE9C4", "#7A4B00"], breaks: ["Breaks", "#FBD9D2", "#8C2415"], no_overload: ["No overload", "#E4EBE6", "#3B4A40"] };
+const PERIOD_MARK: Record<CellState, string> = { within: "✓ ok", absorbed: "✓ absorbed", over: "✕ over" };
+
+function Seasons({ t, matrix, busy, capacity, onPick }: { t: T; matrix: Matrix | null; busy: boolean; capacity: number; onPick: (c: SeasonCell) => void }) {
+  return (
+    <Card t={t} x={1096} y={66} w={320} h={702}>
+      <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Does it hold in every season?</div>
+      <div style={{ fontSize: 12, color: t.mut, margin: "2px 0 8px" }}>Your loads and device settings against each season&apos;s real worst day (2021–2025), capacity {capacity} MW.</div>
+      {!matrix && <div role="status" style={{ padding: 20, fontSize: 14, color: t.mut }}>{busy ? "Testing all four seasons…" : "Preparing the season test…"}</div>}
+      <div style={{ maxHeight: 548, overflowY: "auto", paddingRight: 2 }}>
+      {matrix && matrix.cells.map((c) => { const chip = OUT_CHIP[c.outcome]; return (
+        <button key={c.season} onClick={() => onPick(c)} aria-label={`${c.season}: ${chip[0]}. Open this season`} style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", marginBottom: 8, borderRadius: 12, border: `1px solid ${t.ln}`, background: t.sub, color: t.fg, cursor: "pointer" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><b style={{ fontFamily: FD, fontSize: 15 }}>{cap(c.season)}</b><Pill bg={chip[1]} fg={chip[2]}>{chip[0]}</Pill></div>
+          <div style={{ fontSize: 12, color: t.mut, marginTop: 2 }}>{c.dateUsed} · peak {hourLabel(c.peakHour)}</div>
+          <div style={{ fontSize: 13, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{c.overloadMw > 0 ? <>Overload {c.overloadMw.toFixed(1)} MW · absorbed <b style={{ fontWeight: 600 }}>{c.absorbedMw.toFixed(1)}</b> · still over <b style={{ fontWeight: 600, color: c.remainingMw > 0.05 ? CORAL : t.fg }}>{c.remainingMw.toFixed(1)}</b> MW</> : <>Peak {c.peakLoadMw.toFixed(1)} MW, within capacity all day</>}</div>
+          <div style={{ display: "flex", gap: 2, marginTop: 8 }} aria-hidden="true">{c.hourStates.map((st, i) => <span key={i} title={`${hourLabel(i)}: ${st}`} style={{ flex: 1, height: 12, borderRadius: 2, background: CELL_COLOR[st] }} />)}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: t.mut, marginTop: 2 }}><span>12 am</span><span>noon</span><span>12 am</span></div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6, fontSize: 11 }}>{(["morning", "afternoon", "evening"] as const).map((k) => <span key={k} title={`${cap(k)}: ${PERIOD_MARK[c.periods[k]]}`} style={{ flex: 1, padding: "2px 6px", borderRadius: 8, background: t.bg, border: `1px solid ${t.ln}`, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}><span style={{ color: CELL_COLOR[c.periods[k]] }}>●</span> {cap(k).slice(0, 4)}. {c.periods[k] === "over" ? "over" : "ok"}</span>)}</div>
+          {c.hoursOverBefore > 0 && <div style={{ fontSize: 11, color: t.mut, marginTop: 4 }}>Hours over capacity: {c.hoursOverBefore} → {c.hoursOverAfter}</div>}
+        </button>); })}
+      </div>
+      {matrix && <div style={{ fontSize: 11, color: t.mut, lineHeight: 1.4, marginTop: 6 }}><span style={{ color: CELL_COLOR.within }}>■</span> within capacity &nbsp;<span style={{ color: TEAL }}>■</span> overload absorbed &nbsp;<span style={{ color: CORAL }}>■</span> still over. Owner decisions: {matrix.cells[0]?.decisionSource.replace(/_/g, " ")}. A stress test on history, not a forecast.</div>}
+    </Card>
+  );
+}
+
+function History({ t, history, onRestore }: { t: T; history: HistoryEntry[]; onRestore: (h: HistoryEntry) => void }) {
+  const D = DEFAULTS;
+  const changed = (p: DeviceParams) => [p.batteryCount !== D.batteryCount && `${p.batteryCount} batteries`, p.evFleetCount !== D.evFleetCount && `${p.evFleetCount} EV fleets`, p.buildingCount !== D.buildingCount && `${p.buildingCount} buildings`, p.batteryReservePct !== D.batteryReservePct && `reserve ${p.batteryReservePct}%`, p.evShiftablePct !== D.evShiftablePct && `EV movable ${p.evShiftablePct}%`, p.ownersEnrolledPct !== D.ownersEnrolledPct && `${p.ownersEnrolledPct}% enrolled`, p.minPriceScale !== D.minPriceScale && `price ×${p.minPriceScale}`, p.buildingOffsetC !== D.buildingOffsetC && `${p.buildingOffsetC}°C offset`].filter(Boolean).join(" · ") || "default devices";
+  return (
+    <Card t={t} x={1096} y={66} w={320} h={702}>
+      <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Runs</div>
+      <div style={{ fontSize: 12, color: t.mut, margin: "2px 0 8px" }}>Every run in this session. Load one to restore its loads, devices and conditions.</div>
+      <div style={{ maxHeight: 610, overflowY: "auto" }}>
+        {history.length === 0 && <div style={{ fontSize: 13, color: t.mut }}>No runs yet.</div>}
+        {[...history].reverse().map((h) => { const chip = OUT_CHIP[h.outcome]; return (
+          <div key={h.n} style={{ padding: "10px 0", borderTop: `1px solid ${t.ln}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><b style={{ fontFamily: FD, fontSize: 14 }}>Run {String(h.n).padStart(2, "0")} · {cap(h.season)} {hourLabel(h.hour)}</b><Pill bg={chip[1]} fg={chip[2]}>{chip[0]}</Pill></div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>{h.loads.map((l) => `${LOAD_META[l.kind].label} ${l.size.toLocaleString()} ${LOAD_META[l.kind].unit}`).join(" + ")}</div>
+            <div style={{ fontSize: 11, color: t.mut, marginTop: 2 }}>{changed(h.params)}</div>
+            <div style={{ fontSize: 13, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{h.overloadMw > 0 ? `absorbed ${h.absorbedMw.toFixed(1)} of ${h.overloadMw.toFixed(1)} MW` : "within capacity"}</div>
+            <button onClick={() => onRestore(h)} style={{ marginTop: 6, height: 28, padding: "0 12px", borderRadius: 14, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontSize: 12, cursor: "pointer" }}>Load this setup</button>
+          </div>); })}
+      </div>
     </Card>
   );
 }

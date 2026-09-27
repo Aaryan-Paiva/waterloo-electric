@@ -128,11 +128,11 @@ def _base(world_id: str) -> Population:
 
 @lru_cache(maxsize=16)
 def _variant_population(world_id: str, key: tuple) -> Population:
-    """key = (fleetSize, batteryReservePct, evShiftablePct, buildingOffsetC, buildingMaxHours, reboundPct). Same seeded population, sizes scaled by
+    """key = (fleetSize, batteryReservePct, evShiftablePct, buildingOffsetC, buildingMaxHours, reboundPct, nBatteries, nEvFleets, nBuildings, nSolar). Same seeded population, sizes scaled by
     `fleetSize` (a modeled assumption: how large the flexible fleet is, 1 = calibrated to <= 25% of load) and behavior fields overridden when changed."""
-    fleet, reserve, ev_shift, offset, max_h, rebound = key
+    fleet, reserve, ev_shift, offset, max_h, rebound, n_bat, n_ev, n_bld, n_sol = key
     base = _base(world_id)
-    agents = generate(base.seed, base.scale * fleet)
+    agents = generate(base.seed, base.scale * fleet, {"battery": n_bat, "ev_fleet": n_ev, "building": n_bld, "solar": n_sol})
     out = []
     for a in agents:
         if a.type == "battery" and reserve != 25:
@@ -151,6 +151,10 @@ def _variant_population(world_id: str, key: tuple) -> Population:
                 a = replace(a, **ch)
         out.append(a)
     return Population(base.seed, out, base.scale * fleet, base.ctx, base.baseline_index, dict(base.default_rates))
+
+
+def current_variant() -> Optional[tuple]:
+    return _variant.get()
 
 
 def build_population(world_id: str) -> Population:

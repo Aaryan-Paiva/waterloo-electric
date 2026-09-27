@@ -21,13 +21,25 @@ def _rngs(seed: int) -> dict[str, np.random.Generator]:
     return {k: np.random.default_rng(c) for k, c in zip(("battery", "ev_fleet", "building", "solar"), kids)}
 
 
-def generate(seed: int, scale: float = 1.0):
+DEFAULT_COUNTS = {"battery": N_BATTERY, "ev_fleet": N_EV, "building": N_BUILDING, "solar": N_SOLAR}
+
+
+def _pick(pattern: list, i: int, n: int):
+    """Proportional pattern: for n == len(pattern) this is the pattern itself; larger/smaller n keeps the same mix."""
+    return pattern[min(len(pattern) - 1, i * len(pattern) // n)]
+
+
+def generate(seed: int, scale: float = 1.0, counts: dict | None = None):
+    """`counts` (per type) makes the number of modeled clusters editable. Draws per type come from one seeded stream, so the first k clusters of a
+    type are identical whatever the count (prefix-stable), and the default counts reproduce the original population exactly."""
+    c = {**DEFAULT_COUNTS, **(counts or {})}
     r = _rngs(seed)
     agents = []
 
     g = r["battery"]
-    for i in range(N_BATTERY):
-        kind = "commercial" if i < 12 else ("community" if i < 18 else "industrial")
+    kinds_b = ["commercial"] * 12 + ["community"] * 6 + ["industrial"] * 2
+    for i in range(c["battery"]):
+        kind = _pick(kinds_b, i, c["battery"])
         p = {"commercial": g.uniform(0.15, 0.6), "community": g.uniform(0.6, 1.2), "industrial": g.uniform(1.0, 1.6)}[kind]
         dur = {"commercial": g.choice([2.0, 4.0]), "community": 4.0, "industrial": 2.0}[kind]
         agents.append(BatteryAgent(id=f"battery_{i + 1:03d}", name=f"{kind.title()} battery {i + 1}", draw=float(g.random()), seed=seed, kind=kind,
@@ -37,7 +49,8 @@ def generate(seed: int, scale: float = 1.0):
 
     g = r["ev_fleet"]
     kinds = ["depot"] * 5 + ["workplace"] * 5 + ["residential_managed"] * 4
-    for i, kind in enumerate(kinds[:N_EV]):
+    for i in range(c["ev_fleet"]):
+        kind = _pick(kinds, i, c["ev_fleet"])
         n = int(max(4, round(g.integers(20, 160) * scale)))
         ratio = g.uniform(0.5, 1.0)
         arr, dep = WINDOWS[kind]
@@ -48,14 +61,15 @@ def generate(seed: int, scale: float = 1.0):
 
     g = r["building"]
     order = ["office"] * 12 + ["school"] * 6 + ["retail"] * 8 + ["apartment"] * 6 + ["municipal"] * 4
-    for i, kind in enumerate(order[:N_BUILDING]):
+    for i in range(c["building"]):
+        kind = _pick(order, i, c["building"])
         peak = {"office": g.uniform(0.3, 1.2), "school": g.uniform(0.3, 0.9), "retail": g.uniform(0.2, 0.8), "apartment": g.uniform(0.4, 1.4), "municipal": g.uniform(0.3, 1.0)}[kind]
         agents.append(BuildingAgent(id=f"building_{i + 1:03d}", name=f"{kind.title()} building {i + 1}", draw=float(g.random()), seed=seed, kind=kind,
                                     peak_mw=float(peak * scale), hvac_share_max=float(g.uniform(0.35, 0.55)), shed_fraction=float(g.uniform(0.2, 0.4)),
                                     max_curtail_h=int(g.integers(2, 5)), rebound_fraction=float(g.uniform(0.6, 0.9)), rebound_h=int(g.integers(2, 4))))
 
     g = r["solar"]
-    for i in range(N_SOLAR):
+    for i in range(c["solar"]):
         agents.append(SolarAgent(id=f"solar_{i + 1:03d}", name=f"Solar cluster {i + 1}", draw=float(g.random()), seed=seed,
                                  installed_mw=float(g.uniform(0.3, 1.2) * scale), derate=float(g.uniform(0.85, 1.0))))
     return agents

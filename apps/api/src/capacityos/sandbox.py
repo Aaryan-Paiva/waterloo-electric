@@ -14,9 +14,9 @@ from ..agents.util import to_est, uhash
 from ..data.repositories import get_load, get_pack
 from ..owners.grouping import build_owners
 from ..owners.runner import run_agentic
-from ..projects.data_center import make_project
+from ..projects.loads import make_load
 from ..schemas.owners import AgenticRun, OwnerAgent
-from ..schemas.sandbox import (Curve, DeviceParams, DeviceTypeInfo, SandboxRunRequest, SandboxRunResponse, SandboxWorld, ScriptStep, SeasonInfo)
+from ..schemas.sandbox import (Curve, DeviceParams, DeviceTypeInfo, LoadSpec, MatrixRequest, MatrixResponse, SeasonCell, SandboxRunRequest, SandboxRunResponse, SandboxWorld, ScriptStep, SeasonInfo)
 from ..schemas.scenario import Scenario
 from ..simulation.stress_test import run_capacity_analysis, scenario_frame
 from ..world.population import build_population, use_variant
@@ -29,7 +29,7 @@ GROUP_LABEL = {"battery": "Batteries discharge", "ev": "EV charging shifted late
 DECLINE_TEXT = {"incentive_below_minimum": "the price is below its minimum", "event_too_long": "the event is too long", "reserve_protected": "it is protecting its reserve",
                 "comfort_priority": "comfort comes first", "deadline_risk": "departure deadlines are at risk", "no_capable_assets": "none of its devices can help right now",
                 "event_frequency": "it has used its monthly event quota", "other": "no feasible offer"}
-APPLIED_NOW = ["fleetSizeX", "ownersEnrolledPct", "minPriceScale", "batteryReservePct", "evShiftablePct", "buildingOffsetC", "buildingMaxHours", "reboundPct"]
+APPLIED_NOW = ["fleetSizeX", "batteryCount", "evFleetCount", "buildingCount", "solarCount", "ownersEnrolledPct", "minPriceScale", "batteryReservePct", "evShiftablePct", "buildingOffsetC", "buildingMaxHours", "reboundPct"]
 PENDING = ["evMaxDelayH", "dcFlexPct", "dcMaxDeferH"]
 
 
@@ -68,7 +68,18 @@ def _details(pop, owners) -> dict[str, DeviceTypeInfo]:
     }
 
 
-def world_info() -> SandboxWorld:
+def variant_key(dp: DeviceParams) -> tuple:
+    return (round(dp.fleet_size_x, 2), round(dp.battery_reserve_pct), round(dp.ev_shiftable_pct), round(dp.building_offset_c, 1), dp.building_max_hours, round(dp.rebound_pct),
+            dp.battery_count, dp.ev_fleet_count, dp.building_count, dp.solar_count)
+
+
+def world_info(dp: Optional[DeviceParams] = None) -> SandboxWorld:
+    """The world as the sandbox sees it for a given device configuration (defaults: the visible 60/42/108/24 clusters)."""
+    with use_variant(variant_key(dp or DeviceParams())):
+        return _world_info()
+
+
+def _world_info() -> SandboxWorld:
     pack, pop, owners = get_pack(ZONE), build_population(ZONE), build_owners(ZONE)
     dev = {t: sum(1 for a in pop.agents if a.type == t) for t in ("battery", "ev_fleet", "building", "solar")}
     return SandboxWorld(zone_id=ZONE, zone_name=pack.name, capacity_mw=pack.capacity.value_mw,
@@ -77,10 +88,17 @@ def world_info() -> SandboxWorld:
                         note="A planning sandbox on real demand shape with synthetic devices. Not a forecast or an engineering study.")
 
 
-@lru_cache(maxsize=16)
-def _overlay(dc_mw: float):
+def _norm_loads(req: SandboxRunRequest) -> tuple[tuple[str, float], ...]:
+    loads = req.loads or [LoadSpec(kind="data_centre", size=req.dc_mw)]
+    return tuple(sorted((l.kind, round(float(l.size), 1)) for l in loads))
+
+
+@lru_cache(maxsize=32)
+def _overlay(loads: tuple[tuple[str, float], ...]):
+    """Throwaway scenario: the dropped loads on the real baseline. Never stored; the world is untouched."""
     now = datetime.now(timezone.utc).isoformat()
-    sc = Scenario(id=f"sbx-{dc_mw:g}", zone_id=ZONE, name=f"Sandbox {dc_mw:g} MW data centre", created_at=now, seed=get_pack(ZONE).der_seed, projects=[make_project("sbx-dc", dc_mw)])
+    projects = [make_load(f"sbx-{i}", k, sz) for i, (k, sz) in enumerate(loads)]
+    sc = Scenario(id="sbx-" + "-".join(f"{k}{sz:g}" for k, sz in loads), zone_id=ZONE, name="Sandbox loads", created_at=now, seed=get_pack(ZONE).der_seed, projects=projects)
     df, cap, _, _ = scenario_frame(sc)
     windows = run_capacity_analysis(sc).windows
     return sc, df, cap, windows
@@ -146,14 +164,15 @@ def build_script(run: AgenticRun, focus_ts: str, inc: float) -> tuple[list[Scrip
 
 
 def run_sandbox(req: SandboxRunRequest) -> SandboxRunResponse:
-    sc, df, cap, windows = _overlay(round(req.dc_mw, 1))
+    loads = _norm_loads(req)
+    sc, df, cap, windows = _overlay(loads)
     day = reference_day(req.season)
     target = day + pd.Timedelta(hours=req.hour)
     frame = df.set_index("timestamp")
     day_rows = frame.loc[day: day + pd.Timedelta(hours=23)]
     base = float(frame.at[target, "baseline_mw"])
     before_load = float(frame.at[target, "net_mw"])
-    common = dict(season=req.season, hour=req.hour, date_used=day.date().isoformat(), dc_mw=req.dc_mw, base_mw=round(base, 2), capacity_mw=cap,
+    common = dict(season=req.season, hour=req.hour, date_used=day.date().isoformat(), dc_mw=round(float(frame.at[target, "project_mw"]), 2), loads=[LoadSpec(kind=k, size=sz) for k, sz in loads], base_mw=round(base, 2), capacity_mw=cap,
                   params_applied=APPLIED_NOW, params_pending=PENDING,
                   provenance={"demand": "derived", "devices": "modeled", "capacity": "modeled", "dataCentre": "hypothetical", "results": "derived"},
                   note="Simulation on the real demand shape with synthetic devices. Not a forecast, recommendation or engineering study.")
@@ -168,13 +187,13 @@ def run_sandbox(req: SandboxRunRequest) -> SandboxRunResponse:
     day_end = day + pd.Timedelta(hours=24)
     wins = [w for w in windows if to_est(w.start) < day_end and to_est(w.end) > day]
     if not wins:
-        return calm(f"With a {req.dc_mw:g} MW data centre the zone stays within capacity all day ({req.season}). Try a bigger one to find where it breaks.")
+        return calm(f"With these loads the zone stays within capacity all day ({req.season}). Try a bigger one to find where it breaks.")
     win = next((w for w in wins if to_est(w.start) <= target < to_est(w.end)), None)
     if win is None:
         return calm(f"At {target.strftime('%H:%M')} the zone is within capacity ({before_load:.1f} of {cap:g} MW). The overload is at other hours of the day.")
     w_start, w_end = max(to_est(win.start), day), min(to_est(win.end), day_end)            # a long overload is played one day at a time
     dp = req.device_params
-    key = (round(dp.fleet_size_x, 2), round(dp.battery_reserve_pct), round(dp.ev_shiftable_pct), round(dp.building_offset_c, 1), dp.building_max_hours, round(dp.rebound_pct))
+    key = variant_key(dp)
     try:
         with use_variant(key):
             run = run_agentic(sc, w_start, w_end, None, req.incentive_per_mwh, req.provider, 8, owners_override=owners_for(dp))
@@ -194,3 +213,37 @@ def run_sandbox(req: SandboxRunRequest) -> SandboxRunResponse:
                               curve=Curve(hours=list(range(24)), before=curve.before, after=after), owners_total=run.market.owners_total, owners_accepted=run.market.owners_accepted,
                               event_energy_before_mwh=w.energy_above_capacity_before_mwh, event_energy_after_mwh=w.energy_above_capacity_after_mwh,
                               decision_source=run.decision_source, checks_passed=run.coordination.checks_passed, run_id=run.id, **common)
+
+
+def run_matrix(req: MatrixRequest) -> MatrixResponse:
+    """The same constraint set against every season's real reference day (one run per season; each run covers the whole day, so every hour of it is answered)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    loads = req.loads or [LoadSpec(kind="data_centre", size=req.dc_mw)]
+    key = tuple(sorted((l.kind, round(float(l.size), 1)) for l in loads))
+    _, df, cap, _ = _overlay(key)
+    frame = df.set_index("timestamp")
+
+    def one(season: str) -> SeasonCell:
+        day = reference_day(season)
+        net = frame.loc[day: day + pd.Timedelta(hours=23), "net_mw"]
+        peak_hour = int(net.reset_index(drop=True).idxmax())
+        r = run_sandbox(SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider=req.provider, incentive_per_mwh=req.incentive_per_mwh, device_params=req.device_params))
+        before, after = r.curve.before, r.curve.after
+        states = ["within" if b <= cap + 1e-6 else "absorbed" if a <= cap + 0.05 else "over" for b, a in zip(before, after)]
+        rank = {"within": 0, "absorbed": 1, "over": 2}
+        per = {name: max(states[a:b], key=lambda x: rank[x]) for name, (a, b) in {"morning": (6, 12), "afternoon": (12, 18), "evening": (18, 24)}.items()}
+        overload = round(max(0.0, max(before) - cap), 1)                       # judged over the WHOLE day: the worst hour before and after
+        remaining = round(max(0.0, max(after) - cap), 1) if overload > 0 else 0.0
+        absorbed = round(max(0.0, overload - remaining), 1)
+        outcome, text = _outcome(overload, absorbed, remaining)
+        return SeasonCell(season=season, date_used=r.date_used, peak_hour=peak_hour, outcome=outcome, outcome_text=text, peak_load_mw=round(max(before), 2), peak_load_after_mw=round(max(after), 2),
+                          overload_mw=overload, absorbed_mw=absorbed, remaining_mw=remaining, hours_over_before=sum(b > cap + 1e-6 for b in before),
+                          hours_over_after=sum(a > cap + 0.05 for a in after), hour_states=states, periods=per, decision_source=r.decision_source, owners_accepted=r.owners_accepted, owners_total=r.owners_total)
+
+    order = ["winter", "spring", "summer", "fall"]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        cells = list(ex.map(one, order))
+    return MatrixResponse(capacity_mw=cap, loads=[LoadSpec(kind=k, size=sz) for k, sz in key], cells=cells, params_applied=APPLIED_NOW,
+                          provenance={"demand": "derived", "devices": "modeled", "capacity": "modeled", "results": "derived"},
+                          note="Each cell is the real highest-demand day of that season (2021-2025) with your loads and device settings. A stress test on history, not a forecast.")

@@ -10,9 +10,22 @@ Group = Literal["battery", "ev", "building"]
 Outcome = Literal["holds", "partly_holds", "breaks", "no_overload"]
 
 
+LoadKind = Literal["data_centre", "housing", "ev_depot"]
+
+
+class LoadSpec(CamelModel):
+    kind: LoadKind = "data_centre"
+    size: float = Field(default=20, gt=0, le=100000)        # MW (data centre), homes (housing), chargers (EV depot)
+    lot: Optional[int] = None                                 # where it stands on the map (UI only)
+
+
 class DeviceParams(CamelModel):
     """Concrete, editable device behavior. Owner-level knobs apply from Stage 1; device-level knobs from Stage 2 (see `paramsApplied`)."""
-    fleet_size_x: float = Field(default=3.0, ge=0.5, le=5.0)      # modeled assumption: size of the flexible fleet (1 = calibrated to <= 25% of load)
+    fleet_size_x: float = Field(default=1.0, ge=0.5, le=5.0)      # advanced: scales every device's size (1 = as generated); prefer the visible counts below
+    battery_count: int = Field(default=60, ge=0, le=300)          # modeled clusters; defaults = 3x the original 20/14/36/8 world, now VISIBLE
+    ev_fleet_count: int = Field(default=42, ge=0, le=200)
+    building_count: int = Field(default=108, ge=0, le=400)
+    solar_count: int = Field(default=24, ge=0, le=100)
     battery_reserve_pct: float = Field(default=25, ge=0, le=80)
     owners_enrolled_pct: float = Field(default=100, ge=0, le=100)
     min_price_scale: float = Field(default=1.0, ge=0.2, le=3.0)
@@ -28,6 +41,7 @@ class DeviceParams(CamelModel):
 class SandboxRunRequest(CamelModel):
     season: Season = "summer"
     hour: int = Field(default=16, ge=0, le=23)
+    loads: list[LoadSpec] = Field(default_factory=list)          # new loads to drop in; empty = one 20 MW data centre (dcMw)
     dc_mw: float = Field(default=20, gt=0, le=200)
     provider: Literal["stub", "openai"] = "stub"
     incentive_per_mwh: float = Field(default=100, gt=0, le=1000)
@@ -87,7 +101,8 @@ class SandboxRunResponse(CamelModel):
     hour: int
     date_used: str
     focus_timestamp: str
-    dc_mw: float
+    dc_mw: float                     # total added load at the chosen hour (MW), all loads
+    loads: list[LoadSpec] = Field(default_factory=list)
     base_mw: float
     load_before_mw: float
     load_after_mw: float
@@ -112,3 +127,44 @@ class SandboxRunResponse(CamelModel):
     run_id: Optional[str] = None
     provenance: dict[str, str]
     note: str
+
+
+CellState = Literal["within", "absorbed", "over"]
+
+
+class MatrixRequest(CamelModel):
+    """One constraint set (loads + device parameters + owner provider) tested against every season's real reference day."""
+    loads: list[LoadSpec] = Field(default_factory=list)
+    dc_mw: float = Field(default=20, gt=0, le=200)
+    provider: Literal["stub", "openai"] = "stub"
+    incentive_per_mwh: float = Field(default=100, gt=0, le=1000)
+    device_params: DeviceParams = Field(default_factory=DeviceParams)
+
+
+class SeasonCell(CamelModel):
+    season: Season
+    date_used: str
+    peak_hour: int                     # hour of the day's highest load with these loads
+    outcome: Outcome
+    outcome_text: str
+    peak_load_mw: float                # before the flexible grid acts
+    peak_load_after_mw: float
+    overload_mw: float                 # at the peak hour
+    absorbed_mw: float
+    remaining_mw: float
+    hours_over_before: int
+    hours_over_after: int
+    hour_states: list[CellState]       # 24 hours: within capacity / overload absorbed / still over capacity
+    periods: dict[str, CellState]      # morning (6-11), afternoon (12-17), evening (18-23): the worst state in the period
+    decision_source: str
+    owners_accepted: int
+    owners_total: int
+
+
+class MatrixResponse(CamelModel):
+    capacity_mw: float
+    loads: list[LoadSpec]
+    cells: list[SeasonCell]
+    params_applied: list[str]
+    note: str
+    provenance: dict[str, str]

@@ -1,10 +1,10 @@
 # CapacityOS Development Progress
 
 ## Current Status
-- **Product now:** Waterloo Electric, a live isometric flexible-grid sandbox (see `PLAN.md`). The engine (Phases 0-7) underneath is unchanged and still tested.
-- **Current stage: Stage 6 (polish) — DONE. Stage 7 (freeze and submit) — IN PROGRESS** (README rewritten; final checks and public repo pending).
-- Last verified: backend **156 passed** (pytest), web lint + `tsc` clean, browser-verified drop -> strain -> narrated rebalance -> result.
-- Known limitations: fleet size default 3x is an assumption; data-centre flexible compute not modeled; device inspector not built; not yet checked at projector size; nothing committed since the scaffold; OpenAI owners untested live beyond the earlier partial run.
+- **Product:** Waterloo Electric, a live isometric flexible-grid sandbox (see `PLAN.md`). Engine (Phases 0-7) unchanged and tested.
+- **Current stage: Stage C (live experience) next.** Stages 0, A, B done and committed.
+- Last verified: sandbox tests 18 passed; full backend suite run in progress at commit time (result below); web 15 passed, lint and tsc clean, production build clean; browser-verified multi-load, device counts, season test.
+- Known limitations: default owners are the deterministic policy until Stage C makes LLM owners the visible default; data-centre flexible compute not modeled; capacity 90 MW is still an assumption (Stage D: real station limit); live clock, asset log and optimizations pane not built yet.
 
 ### Stage tracker (updated as I build; times are wall clock, deadline Sun 12:00)
 | Stage | Scope | Status |
@@ -15,6 +15,10 @@
 | 3 | Isometric world renderer | DONE (all seasons, night, states) |
 | 4 | Drag-and-drop, script player, result | DONE, browser-verified |
 | 5 | Device editor drawer | DONE (+ device inspector, "what changed" line) |
+| A | Sandbox breadth: editable device counts, multiple loads, visible defaults | DONE |
+| B | Experimentation: season test + run history | DONE |
+| C | Live experience: streamed owner states, LLM default + cache, asset log, optimizations pane, light clock | NEXT |
+| D | Credibility + submission | NOT STARTED |
 | 6 | Narration + polish | DONE (error/loading states, retry, 30 s request timeout, inspector, change note, projector-size check at 1280x720, pinned default scenario) |
 | 7 | Freeze, docs, submit | IN PROGRESS |
 
@@ -107,3 +111,10 @@ What changed: backend `deviceDetails` in `/api/sandbox/world` (real per-type tot
 Tests: backend +2 (device details, pinned default demo scenario summer 2 pm 20 MW: base 76.4, before 96.4, holds, absorbed 6.4), web +5 (15 total).
 Verification: sandbox tests 10 passed, web 15 passed, lint and tsc clean, production build clean; browser: inspector opens, reserve 25% -> 60% changes the result and prints "Absorbs 0.3 MW less than the previous run", layout fits 1280x720 with no clipping, API-down screen shown when the API is stopped.
 Next: Stage 7: full backend suite, README (rewritten for the new product), clean-clone check, make the repo public (needs your confirmation), submit.
+
+### 2026-09-27 ~02:45 — Stage A (sandbox breadth) and Stage B (experimentation) DONE
+Stage A: `world/generator.py` counts per type (proportional kinds, prefix-stable seeded draws, defaults reproduce the original 20/14/36/8 world exactly); `population.py` variant key includes the counts; `owners/grouping.py` is variant-aware and adapts owner count when devices are few; `projects/loads.py` (housing: homes, evening-shaped, ~1.8 kW/home peak; EV depot: chargers x 19.2 kW, overnight; data centre unchanged) with `ProfileProject`; `SandboxRunRequest.loads` (up to 4 lots); the hidden 3x fleet multiplier is replaced by VISIBLE default counts 60/42/108/24 (= the old 3x world); `POST /api/sandbox/world` returns real totals for an edited configuration. Web: three draggable loads, an always-available dock, "Your loads" list with per-load size and remove, editor with device counts and live MW/MWh totals, isometric drawings of a housing block and an EV depot.
+Stage B: `POST /api/sandbox/matrix` (4 seasons, one run each, concurrent, whole-day judgment: hours over capacity before/after, per-hour state strip, morning/afternoon/evening) and web tabs Result / Seasons / Runs (run history with "Load this setup").
+Tests: backend +7 (sandbox file 18: counts, owner regroup, housing/depot loads, multi-load, acceptance sentence, matrix x3). Web unchanged (15).
+Findings: default world (234 clusters) holds a 20 MW data centre at 2 pm summer (1.5 s run); 4-season test takes ~3 s with the stub; at 20 MW winter and spring show no overload; at 35 MW every season is stressed and summer breaks.
+Next: Stage C.
