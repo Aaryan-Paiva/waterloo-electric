@@ -23,3 +23,7 @@ apps/api/.env
 
 # generated demo-video assets (large, regenerable via apps/web/scripts/*)
 apps/web/scripts/out/
+
+# demo-video script/storyboard docs stay local only
+apps/web/scripts/demo_video_script.md
+apps/web/scripts/demo_video_storyboard.md

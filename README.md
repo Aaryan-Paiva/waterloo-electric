@@ -99,8 +99,6 @@ IESO timestamps are treated as fixed EST (an unverified convention, stated expli
 
 The frontend never runs the simulation itself. Every screen — the Result tab, the Log, Fix It's tested pathways, the Seasons comparison — is a JSON response from a real backend computation, and the UI just animates a script built from that real trace. This is a deliberate design choice: it means the demo you see is never faked, only ever replayed.
 
-Further detail: [PLAN.md](PLAN.md), [ARCHITECTURE.md](ARCHITECTURE.md), [CLAUDE.md](CLAUDE.md), [docs/modeling-assumptions.md](docs/modeling-assumptions.md), build journal in [PROGRESS.md](PROGRESS.md).
-
 ## Run it
 
 ```bash
