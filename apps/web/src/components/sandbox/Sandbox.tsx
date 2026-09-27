@@ -24,8 +24,8 @@ const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 function theme(dark: boolean) { return { bg: dark ? "rgba(22,28,40,.92)" : "rgba(251,247,238,.95)", fg: dark ? "#F4EFE2" : INK, mut: dark ? "#A9B3C4" : "#6A6F66", ln: dark ? "#33405A" : LINE, sub: dark ? "rgba(255,255,255,.08)" : "rgba(29,35,32,.07)", dark }; }
 type T = ReturnType<typeof theme>;
-const Card = ({ t, x, y, w, h, children, pad = 16 }: { t: T; x: number; y: number; w: number; h?: number; children: React.ReactNode; pad?: number }) => (
-  <div style={{ position: "absolute", left: x, top: y, width: w, height: h, boxSizing: "border-box", padding: pad, borderRadius: 16, background: t.bg, border: `1px solid ${t.ln}`, color: t.fg, fontFamily: FB }}>{children}</div>
+const Card = ({ t, x, y, w, h, children, pad = 16, scroll = false }: { t: T; x: number; y: number; w: number; h?: number; children: React.ReactNode; pad?: number; scroll?: boolean }) => (
+  <div style={{ position: "absolute", left: x, top: y, width: w, height: h, overflowY: scroll ? "auto" : undefined, boxSizing: "border-box", padding: pad, borderRadius: 16, background: t.bg, border: `1px solid ${t.ln}`, color: t.fg, fontFamily: FB }}>{children}</div>
 );
 const Pill = ({ children, bg, fg }: { children: React.ReactNode; bg: string; fg: string }) => <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 24, padding: "0 10px", borderRadius: 12, background: bg, color: fg, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{children}</span>;
 const Dot = ({ c }: { c: string }) => <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: c }} />;
@@ -39,6 +39,7 @@ export function Sandbox() {
   const [dragKind, setDragKind] = useState<LoadKind>("data_centre");
   const [trayOpen, setTrayOpen] = useState(false);
   const [tab, setTab] = useState<TabKey>("result");
+  const [incentive, setIncentive] = useState(100);
   const [live, setLive] = useState<OwnerProgress[]>([]);
   const [clock, setClock] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -87,29 +88,29 @@ export function Sandbox() {
     const id = ++reqId.current;
     const h = setTimeout(() => {
       setBusy(true); setRun(null); setProg(0); setLive([]);
-      postSandboxRunStream({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), provider, incentivePerMwh: 100, deviceParams: params }, (p) => { if (id === reqId.current) setLive((l) => [...l, p]); })
+      postSandboxRunStream({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), provider, incentivePerMwh: incentive, deviceParams: params }, (p) => { if (id === reqId.current) setLive((l) => [...l, p]); })
         .then((r) => { if (id === reqId.current) { const o = lastDone.current; setPrev(o); setRun(r); setProg(0); setErr(null); setTab("result");
           setHistory((h) => [...h, { n: ++histN.current, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), params, provider, season, hour, outcome: r.outcome, overloadMw: r.overloadMw, absorbedMw: r.absorbedMw, remainingMw: r.remainingMw, source: r.decisionSource }]); } })
         .catch((e) => id === reqId.current && setErr(String(e)))
         .finally(() => id === reqId.current && setBusy(false));
     }, 350);
     return () => clearTimeout(h);
-  }, [loads, season, hour, params, provider, world, retry]);
+  }, [loads, season, hour, params, provider, incentive, world, retry]);
 
   // the season test: the same loads and settings against each season's real day (fetched when the Seasons tab is open)
-  const cfgKey = JSON.stringify([loads.map((l) => [l.kind, l.size]), params, provider]);
+  const cfgKey = JSON.stringify([loads.map((l) => [l.kind, l.size]), params, provider, incentive]);
   useEffect(() => {
     if (tab !== "seasons" || loads.length === 0 || (matrix && matrix.key === cfgKey)) return;
     let live = true;
     const h = setTimeout(() => {
       setMatrixBusy(true);
-      postMatrix({ loads: loads.map((l) => ({ kind: l.kind, size: l.size })), provider, incentivePerMwh: 100, deviceParams: params })
+      postMatrix({ loads: loads.map((l) => ({ kind: l.kind, size: l.size })), provider, incentivePerMwh: incentive, deviceParams: params })
         .then((d) => live && setMatrix({ key: cfgKey, data: d }))
         .catch((e) => live && setErr(String(e.message ?? e)))
         .finally(() => live && setMatrixBusy(false));
     }, 200);
     return () => { live = false; clearTimeout(h); };
-  }, [tab, cfgKey, loads, provider, params, matrix]);
+  }, [tab, cfgKey, loads, provider, params, incentive, matrix]);
 
   // real totals for the device configuration the user built (debounced)
   useEffect(() => {
@@ -218,7 +219,7 @@ export function Sandbox() {
           {!inspect && !trayOpen && !drawer && tab === "log" && run && <LogPane t={t} run={run} />}
           {!inspect && !trayOpen && !drawer && tab === "history" && <History t={t} history={history} onRestore={(h) => { setLoads(h.loads.map((l) => ({ id: `l${nextId.current++}`, kind: l.kind, size: l.size, lot: l.lot }))); setParams(h.params); setProvider(h.provider); setSeason(h.season); setHour(h.hour); setTab("result"); }} />}
           {!inspect && !trayOpen && !drawer && tab === "result" && run && finished && <Result t={t} run={run} note={changeNote(prev, run)} onLoads={() => setTrayOpen(true)} onEdit={() => setDrawer(true)} onSeason={(s) => { setSeason(s); setHour(s === "winter" ? 18 : 14); }} reset={reset} />}
-          {drawer && <Drawer t={t} llm={world?.llmAvailable ?? false} params={params} setP={setP} provider={provider} setProvider={setProvider} world={devWorld ?? world} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
+          {drawer && <Drawer t={t} incentive={incentive} setIncentive={setIncentive} llm={world?.llmAvailable ?? false} params={params} setP={setP} provider={provider} setProvider={setProvider} world={devWorld ?? world} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
 
           {/* owner speech bubbles anchored to the real device groups */}
           {run && !finished && (["battery", "ev", "building"] as Group[]).map((g, gi) => {
@@ -370,11 +371,11 @@ function Slider({ t, label, value, min, max, step, unit, set, note }: { t: T; la
   return <label style={{ display: "block", marginTop: 8 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span>{label}</span><b style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}{unit}</b></div>
     <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => set(+e.target.value)} style={{ width: "100%", accentColor: TEAL, margin: "4px 0 0" }} aria-label={label} />{note && <div style={{ fontSize: 11, color: t.mut }}>{note}</div>}</label>;
 }
-function Drawer({ t, llm, params: p, setP, provider, setProvider, world, close, defaults }: { t: T; llm: boolean; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; world: SandboxWorldInfo | null; close: () => void; defaults: DeviceParams }) {
+function Drawer({ t, incentive, setIncentive, llm, params: p, setP, provider, setProvider, world, close, defaults }: { t: T; incentive: number; setIncentive: (n: number) => void; llm: boolean; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; world: SandboxWorldInfo | null; close: () => void; defaults: DeviceParams }) {
   const sec = (title: string, sub: string) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 10, borderTop: `1px solid ${t.ln}` }}><b style={{ fontFamily: FD, fontSize: 15 }}>{title}</b><span style={{ fontSize: 11, color: t.mut }}>{sub}</span></div>;
   const dd = world?.deviceDetails;
   return (
-    <Card t={t} x={1096} y={24} w={320} h={744} pad={16}>
+    <Card t={t} x={1096} y={24} w={320} h={744} pad={16} scroll>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Edit the devices</div><button onClick={close} aria-label="Close editor" style={{ border: 0, background: t.sub, color: t.fg, width: 28, height: 28, borderRadius: 14, cursor: "pointer" }}>×</button></div>
       <div style={{ fontSize: 12, color: t.mut, marginTop: 2 }}>Applies on the next run. Assumptions, not measurements.</div>
       {sec("How many", "modeled clusters")}
@@ -384,6 +385,7 @@ function Drawer({ t, llm, params: p, setP, provider, setProvider, world, close, 
       <Slider t={t} label="Solar" value={p.solarCount} min={0} max={80} step={2} unit="" set={(v) => setP("solarCount", v)} note="context only, never dispatched" />
       {sec("Owners", "who decides")}
       <Slider t={t} label="Owners enrolled" value={p.ownersEnrolledPct} min={10} max={100} step={10} unit="%" set={(v) => setP("ownersEnrolledPct", v)} />
+      <Slider t={t} label="Incentive offered" value={incentive} min={25} max={200} step={5} unit=" $/MWh" set={setIncentive} note="the most the program will pay owners" />
       <Slider t={t} label="Owners' minimum price" value={p.minPriceScale} min={0.5} max={2} step={0.25} unit="×" set={(v) => setP("minPriceScale", v)} />
       {sec("Batteries", "reserve")}
       <Slider t={t} label="Reserve kept" value={p.batteryReservePct} min={5} max={70} step={5} unit="%" set={(v) => setP("batteryReservePct", v)} />

@@ -39,7 +39,8 @@ Decide whether to participate, how much, and at what price, according to YOUR pr
 preference, comfort / driver priorities, degradation sensitivity, max event hours, risk tolerance, participation tendency).
 Rules: act ONLY by calling exactly one tool. Offer blocks are hour indexes into request.hours (end exclusive) with MW per asset; only offer assets you \
 control. A physical validator will reject offers the assets cannot physically deliver; you may not override it. Asking above the \
-incentive ceiling makes a counteroffer that will not be cleared. Be realistic and consistent with your preferences; keep explanations short."""
+incentive ceiling makes a counteroffer that will not be cleared. Be realistic and consistent with your preferences; keep explanations short.
+Practical guidance: offer ONLY in hours where request.requestedMwByHour is above 0 (the event window peak is what matters); size the offer to the request, not to your assets' maximum. Each asset's deliverableMwhTotal is the energy it can really deliver over the window: keep the sum of (MW x hours) per asset at or below it and put it in the highest-need hours. maxMwByHour is a static ceiling, not a joint guarantee: a battery cannot run at its ceiling for every hour (energy is finite, so keep MW x hours within its usable energy and use the highest-need hours), an EV fleet must recover deferred energy before departure, a building can only curtail for its max hours. When revising after a physical rejection, COPY the blocks from physicalRejection.validation.lines[].feasibleEnvelope for each asset (you may lower them, never raise them)."""
 
 
 def _schema(model) -> dict:
@@ -82,7 +83,9 @@ class OpenAIProvider:
 
     # -- public --------------------------------------------------------------------------------------------------------
     def decide(self, ctx: OwnerContext) -> ProviderResult:
-        return self._run(ctx, ["submit_offer", "decline_offer", "request_information"], {"task": "decide", "context": ctx.model_dump(by_alias=True)})
+        req = ctx.request.requested_mw_by_hour
+        top = sorted(range(len(req)), key=lambda t: -req[t])[:5]
+        return self._run(ctx, ["submit_offer", "decline_offer", "request_information"], {"task": "decide", "highestNeedHourIndexes": sorted(top), "context": ctx.model_dump(by_alias=True)})
 
     def revise(self, ctx: OwnerContext, rejection: Rejection) -> ProviderResult:
         return self._run(ctx, ["revise_offer", "decline_offer"], {"task": "revise_once", "context": ctx.model_dump(by_alias=True),

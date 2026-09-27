@@ -126,3 +126,10 @@ Next: Stage C.
 - Light clock: "Play the day" sweeps the real reference day (gauge, day/night, overload state from the run's curve).
 - Live check: 18/18 real gpt-5.4-mini owners in 34 s, repeat 0.03 s from cache. Tests: 170 backend passed (4 new), web 15 passed, lint/tsc/build clean.
 
+
+## Stage D (in progress)
+- Incentive slider ($25-200/MWh) so the acceptance scenario (40% enrolled, $75, 1000 homes + 20 MW DC) is runnable; editor panel scrolls.
+- LLM owners were making poorly shaped offers (0.0 MW absorbed at the peak hour). Fixed the context, not the physics: each asset now carries `deliverableMwhTotal` (from the physical model), the prompt says to offer only in high-need hours, to copy the validator's envelope when revising, and the request lists `highestNeedHourIndexes`. Validated energy rose ~19 -> ~70 MWh in a 20 MW summer run. Results still vary run to run (real model): e.g. 20 MW summer 2 pm partly holds 5.4/6.4 MW; the acceptance scenario breaks at 40% enrolled and $75. That is a real finding of the sandbox, not a bug.
+- `scripts/warm_cache.py` pre-runs 3 demo scenarios with the real LLM so the demo replays instantly.
+- Projector check: fits 1280x720 without scroll (stage scales 0.8x); scale is min(width/1440, (height-24)/900).
+- Cut: real Waterloo station limit (no verified source; capacity stays labelled Modeled/assumed).

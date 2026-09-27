@@ -83,7 +83,7 @@ def run_agentic(scenario: Scenario, w_start: pd.Timestamp, w_end: pd.Timestamp, 
     if pinfo.fallback_reason:
         emit("provider.fallback", reason=pinfo.fallback_reason, requested=pinfo.requested, used=pinfo.used)
 
-    contexts: dict[str, OwnerContext] = {o.id: build_context(ph, o, request) for o in owners}
+    contexts: dict[str, OwnerContext] = {o.id: build_context(ph, o, request, with_energy_hint=prov.name not in ("stub", "replay")) for o in owners}
     stats = {"calls": 0, "failed": 0, "timeouts": 0, "fallbacks": 0, "in": 0, "out": 0}
     actions: dict[str, list] = {}
 

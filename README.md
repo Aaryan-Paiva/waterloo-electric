@@ -14,10 +14,10 @@ Connecting big new loads (AI data centres, EV depots, housing) to the grid takes
 
 ## What you can do
 - **Drag a data centre** (5-60 MW) onto an empty lot. The zone strains against a 90 MW modeled capacity.
-- **Watch it rebalance:** 18 modeled owners offer or decline, a physical check reduces impossible offers (battery charge, EV departure deadlines, building comfort), and an OR-Tools optimizer decides who does what. Speech bubbles, captions and optional spoken narration follow it.
+- **Watch it rebalance:** 18 owner agents (real LLM agents when an OpenAI key is configured, a labelled deterministic policy otherwise) offer or decline as their decisions stream in, a physical check reduces impossible offers (battery charge, EV departure deadlines, building comfort), and an OR-Tools optimizer decides who does what. Speech bubbles, captions and optional spoken narration follow it. The **Log** tab shows every owner's decision, its own explanation and the optimizer's summary. **Play the day** sweeps the real reference day.
 - **Read the result:** how much of the overload was absorbed, by device type, a before/after chart of the real day, and a plain label (holds / partly holds / breaks). It states what happened in the simulation, not a real-world verdict.
 - **Change the conditions:** four seasons and a time-of-day slider. Each season replays the real highest-demand day of 2021-2025 for that season.
-- **Edit the devices:** fleet size, owners enrolled, owners' minimum price, battery reserve, EV shiftable share, allowed temperature offset, longest curtailment, rebound. A "what changed" line compares with the previous run.
+- **Edit the devices:** device counts, incentive ($/MWh), fleet size, owners enrolled, owners' minimum price, battery reserve, EV shiftable share, allowed temperature offset, longest curtailment, rebound. A "what changed" line compares with the previous run.
 - **Inspect a device type** (click a legend row or a cluster): what it does, size, owners, limits and its contribution in the current run.
 
 ## Data honesty (labelled on screen)
@@ -50,7 +50,7 @@ cd apps/api && uv venv --python 3.12 .venv && uv pip install --python .venv/bin/
 # Web (another terminal)
 cd apps/web && cp .env.example .env.local && npm install && npm run dev      # http://localhost:3000
 ```
-No API key is needed. Optional real LLM owners: `cp .env.example .env`, set `OWNER_AGENT_PROVIDER=openai` and `OPENAI_API_KEY`, and `uv pip install -e ".[openai]"` (never commit `.env`).
+No API key is needed (owners then use the deterministic policy, labelled). Real LLM owners: `cp .env.example .env`, set `OWNER_AGENT_PROVIDER=openai` and `OPENAI_API_KEY`, `uv pip install -e ".[openai]"`, and start the API from a shell that has loaded `.env` (never commit it). A first real-LLM run takes about 35 s (18 parallel calls); identical reruns replay instantly from a local decision cache (`apps/api/.cache`, gitignored). `scripts/warm_cache.py` pre-runs the demo scenarios. LLM decisions vary from run to run; the cache pins one, and the physical validator and optimizer never trust them.
 
 ## Tests
 ```bash
