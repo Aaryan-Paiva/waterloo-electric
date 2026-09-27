@@ -20,3 +20,6 @@ data/processed/legacy/
 .claude/
 apps/api/.env
 .cache/
+
+# generated demo-video assets (large, regenerable via apps/web/scripts/*)
+apps/web/scripts/out/
