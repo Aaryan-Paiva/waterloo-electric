@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: waterloo-electric-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/sandbox/world
+    envVars:
+      - key: OWNER_AGENT_PROVIDER
+        value: openai
+      - key: OWNER_AGENT_MODEL
+        value: gpt-5.4-mini
+      - key: OWNER_AGENT_MIN_INTERVAL_SECONDS
+        value: "0.4"
+      - key: CAPACITYOS_CORS_ORIGINS
+        sync: false        # set to your Vercel URL, e.g. https://waterloo-electric.vercel.app
+      - key: OPENAI_API_KEY
+        sync: false        # paste in the Render dashboard only; never commit

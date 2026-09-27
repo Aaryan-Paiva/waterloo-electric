@@ -63,3 +63,7 @@ The engine's earlier analysis screens live at `/world/waterloo-demo` (scenario e
 
 ## Not built (next)
 Data-centre flexible compute, water heaters and industrial demand response, locking parts of the fleet, automatic scenario sweeps, recommendations, reports, an upload flow for new zones.
+
+## Deploy
+- **Web (Vercel):** import the repo, set **Root Directory** to `apps/web`, add `NEXT_PUBLIC_API_URL` = your API's public URL.
+- **API (Render, Docker):** `render.yaml` + `Dockerfile` at the repo root. Set `OPENAI_API_KEY` in the Render dashboard (never in the repo) and `CAPACITYOS_CORS_ORIGINS` to the Vercel URL. The API needs a long-lived Python host: OR-Tools and pandas are too large for Vercel functions and a real-LLM run takes about 35 s.
