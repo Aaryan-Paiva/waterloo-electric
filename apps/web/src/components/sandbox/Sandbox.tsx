@@ -4,6 +4,7 @@ import { IsoWorld } from "@/components/iso/IsoWorld";
 import { ANCHORS, H, W, lotAt, type Phase, type Season } from "@/components/iso/scene";
 import { fetchSandboxWorld, fetchWorldFor, postMatrix, postSandboxRunStream, postRecommend, type OwnerProgress, type RecommendResponse, type CellState, type DeviceParams, type Matrix, type SeasonCell, type Group, type LoadKind, type SandboxRun, type SandboxWorldInfo, type ScriptStep } from "@/lib/sandbox";
 import { changeNote, derivePhase, gaugeLoad, hourLabel, nightOf } from "@/lib/sandboxLogic";
+import { NAV_H } from "@/components/site/Nav";
 
 const INK = "#1D2320", PAPER = "#FBF7EE", LINE = "#D9D1BE", AMB = "#F2A72E", TEAL = "#1F9E89", CORAL = "#E5533D", BLUE = "#3F86D8", VIO = "#8C7AE0";
 const FD = "var(--font-display), 'Bricolage Grotesque', system-ui, sans-serif", FB = "var(--font-body), 'IBM Plex Sans', system-ui, sans-serif";
@@ -88,7 +89,7 @@ export function Sandbox() {
   }, [playing]);
   useEffect(() => {
     const el = wrap.current; if (!el) return;
-    const ro = new ResizeObserver(() => setScale(Math.min(el.clientWidth / W, (window.innerHeight - 24) / H)));
+    const ro = new ResizeObserver(() => setScale(Math.min(el.clientWidth / W, (window.innerHeight - NAV_H - 24) / H)));
     ro.observe(el); return () => ro.disconnect();
   }, []);
 
@@ -197,7 +198,7 @@ export function Sandbox() {
   const setP = (k: keyof DeviceParams, v: number) => setParams((p) => ({ ...p, [k]: v }));
 
   if (err && !world) return (
-    <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#1D2320", fontFamily: FB }}>
+    <main style={{ minHeight: `calc(100vh - ${NAV_H}px)`, display: "flex", alignItems: "center", justifyContent: "center", background: "#1D2320", fontFamily: FB }}>
       <div role="alert" style={{ maxWidth: 520, padding: 28, borderRadius: 16, background: PAPER, color: INK }}>
         <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20 }}>The simulation isn&apos;t running</div>
         <p style={{ fontSize: 14, lineHeight: 1.5 }}>Waterloo Electric couldn&apos;t reach its API. Start it, then try again:</p>
@@ -211,7 +212,7 @@ export function Sandbox() {
   const over = loadNow > capacity + 0.05;
 
   return (
-    <main ref={wrap} style={{ width: "100%", minHeight: "100vh", background: "#1D2320", display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
+    <main ref={wrap} style={{ width: "100%", minHeight: `calc(100vh - ${NAV_H}px)`, background: "#1D2320", display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
       <div style={{ width: W * scale, height: H * scale, position: "relative" }}>
         <div ref={stage} style={{ position: "absolute", left: 0, top: 0, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "0 0", overflow: "hidden", background: "#B4D688", fontFamily: FB }}>
           <div onClick={(e) => { const p = toStage(e.clientX, e.clientY); const hit = ([["battery", ANCHORS.battery], ["ev", ANCHORS.ev], ["building", ANCHORS.building]] as [Group, [number, number]][]).find(([, a]) => Math.hypot(p.x - a[0], p.y - 30 - a[1]) < 90); if (hit) { setInspect(hit[0]); setDrawer(false); } }} style={{ position: "absolute", inset: 0 }} aria-hidden="true" />

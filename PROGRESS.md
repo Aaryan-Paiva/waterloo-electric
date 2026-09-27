@@ -158,3 +158,16 @@ Next: Stage C.
 - Verified live via curl against the running API: all 3 run scenarios and both recommend searches now return instantly (`cached: true`) with the correct decision source.
 - Note: `.cache/sandbox/` is local and gitignored — it does not travel with a deploy. The Render instance will need its own warm-up run (either via a one-off `warm_cache.py` invocation against it, or by clicking through the demo once after deploy so its own cache fills).
 - Remaining for "deploy it": actually creating the Vercel and Render projects, which needs the user's login on both dashboards — prep files (`Dockerfile`, `render.yaml`) already exist from an earlier stage.
+
+### Deployed live
+- API on Render (Free tier, manual Web Service, not Blueprint — Blueprints require a card on file): https://waterloo-electric.onrender.com. `OWNER_AGENT_*` + `OPENAI_API_KEY` set via the dashboard's "Add from .env"; health check path `/health`.
+- Web on Vercel: https://waterloo-electric.vercel.app, root directory `apps/web`, `NEXT_PUBLIC_API_URL` pointing at the Render URL; `CAPACITYOS_CORS_ORIGINS` set on Render to the Vercel URL.
+- Verified end-to-end live: world loads (234 device clusters, `llmAvailable: true`), a live LLM run on the deployed API completes and then replays instantly from Render's own cache (separate from the local machine's warmed cache — a fresh deploy starts with an empty one).
+- Free-tier tradeoff accepted deliberately (not Starter): spins down after 15 min idle and loses its filesystem cache on spin-down/restart. Plan for the actual demo: warm the 3 scenarios once right before presenting and keep the tab active during the demo window so it doesn't spin down.
+
+### Three-tab site + redesigned landing page
+- Added a global sticky nav (`components/site/Nav.tsx`, in the root layout) with exactly 3 tabs: Home (`/`), Product (`/sandbox`), How it works (new `/how-it-works`) — active-tab highlighted, one line at all widths including mobile.
+- Sandbox page's viewport-fit math (`window.innerHeight`-based scale, both `main` blocks) adjusted for the nav's fixed height so the verified 1280x720 projector fit still holds with the nav present.
+- Home page (`app/page.tsx`) rewritten for a judge/VC audience: problem/why-now framing, a "why it holds up" 4-pillar section mapped directly to the real architecture (real demand, real agents, real physics validation, real optimizer), a condensed how-it-works teaser linking out, who-it's-for, and an honest "what's next" (real utility pilot) section answering the roadmap question without fabricating traction numbers.
+- New `/how-it-works` page: the full 6-step pipeline explanation, the provenance table (moved here from home), "what this is not", and a judge-facing FAQ (real customers? does the LLM control the grid? OpenAI-down behavior? is 90 MW real? does it generalize? what changes for a real pilot?) — all answered from what's actually built, nothing fabricated.
+- Verified: lint/tsc/build clean, 15 web tests pass, browser-checked at desktop, 1280x720 projector size, and 375px mobile (nav wraps/overflows fixed with `nowrap` + responsive sizing).
