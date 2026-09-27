@@ -201,7 +201,7 @@ export function Sandbox() {
     <main style={{ minHeight: `calc(100vh - ${NAV_H}px)`, display: "flex", alignItems: "center", justifyContent: "center", background: "#1D2320", fontFamily: FB }}>
       <div role="alert" style={{ maxWidth: 520, padding: 28, borderRadius: 16, background: PAPER, color: INK }}>
         <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20 }}>The simulation isn&apos;t running</div>
-        <p style={{ fontSize: 14, lineHeight: 1.5 }}>Waterloo Demo World couldn&apos;t reach its API. Start it, then try again:</p>
+        <p style={{ fontSize: 14, lineHeight: 1.5 }}>Ontario Southwest Zone Sandbox couldn&apos;t reach its API. Start it, then try again:</p>
         <code style={{ display: "block", padding: 10, borderRadius: 8, background: "rgba(29,35,32,.07)", fontSize: 12 }}>cd apps/api &amp;&amp; .venv/bin/uvicorn src.main:app --port 8000</code>
         <button onClick={() => window.location.reload()} style={{ marginTop: 14, height: 36, padding: "0 16px", borderRadius: 18, border: 0, background: INK, color: PAPER, fontWeight: 600, cursor: "pointer" }}>Try again</button>
       </div>
@@ -224,7 +224,7 @@ export function Sandbox() {
           <Card t={t} x={24} y={24} w={352} h={144}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 34, height: 34, borderRadius: 10, background: AMB, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill={AMB} stroke={INK} strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg></div>
-              <div style={{ flexGrow: 1 }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, lineHeight: 1.1 }}>Waterloo Demo World</div><div style={{ fontSize: 12, color: t.mut }}>CapacityOS sandbox</div></div>
+              <div style={{ flexGrow: 1 }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17, lineHeight: 1.15 }}>Ontario Southwest Zone Sandbox</div><div style={{ fontSize: 12, color: t.mut }}>A CapacityOS world pack</div></div>
               <button onClick={() => setHelp(true)} aria-label="60-second tour" style={{ width: 30, height: 30, borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontFamily: FD, fontWeight: 700, fontSize: 14, cursor: "pointer", flex: "none" }}>?</button>
               <button onClick={() => { if (loads.length === 0 && Object.keys(params).every((k) => params[k as keyof DeviceParams] === DEFAULTS[k as keyof DeviceParams]) && !capOverride) return; reset(); }} aria-label="Reset the whole world" title="Reset the whole world" style={{ width: 30, height: 30, borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>

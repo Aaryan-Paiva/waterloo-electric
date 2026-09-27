@@ -65,7 +65,7 @@ export default function Home() {
               Prove a VPP holds before someone deploys it.
             </h1>
             <p className="mt-5 text-base sm:text-lg" style={{ color: "#D8D3C4", lineHeight: 1.55 }}>
-              Drop a new AI data centre, housing development, or EV depot onto a live Waterloo Demo World, and watch whether a specific flexibility program can absorb it — real demand, real physics, a real optimizer.
+              Drop a new AI data centre, housing development, or EV depot onto the live Ontario Southwest Zone Sandbox, and watch whether a specific flexibility program can absorb it — real demand, real physics, a real optimizer.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link href="/sandbox" style={{ background: AMB, color: INK }} className="rounded-full px-6 py-3 text-base font-semibold hover:opacity-90 transition">
@@ -94,7 +94,7 @@ export default function Home() {
                 <span className="ml-2.5 text-xs" style={{ color: "#8A8F82" }}>waterloo-electric.vercel.app/sandbox</span>
               </div>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/guide/00-hero-holds.png" alt="A live run in Waterloo Demo World: a 20 MW data centre absorbed, result holds" style={{ width: "100%", display: "block" }} />
+              <img src="/guide/00-hero-holds.png" alt="A live run in Ontario Southwest Zone Sandbox: a 20 MW data centre absorbed, result holds" style={{ width: "100%", display: "block" }} />
             </div>
             <div className="absolute -top-3 -right-3 flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ background: INK, border: `1px solid ${TEAL}`, color: TEAL, fontFamily: FD }}>
               <span className="pulse-dot" style={{ width: 7, height: 7, borderRadius: "50%", background: TEAL, display: "inline-block" }} />
@@ -180,7 +180,7 @@ export default function Home() {
           <h2 style={{ fontFamily: FD, fontWeight: 700 }} className="mt-2 text-2xl sm:text-4xl leading-tight text-center">Every one of these is a real, working part of the sandbox.</h2>
           <div className="mt-10 relative rounded-2xl overflow-hidden shadow-2xl" style={{ border: "1px solid #2C332D" }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/guide/05-result.png" alt="Waterloo Demo World with a 7.3 MW overload, breaking, numbered hotspots over each real feature" style={{ width: "100%", display: "block" }} />
+            <img src="/guide/05-result.png" alt="Ontario Southwest Zone Sandbox with a 7.3 MW overload, breaking, numbered hotspots over each real feature" style={{ width: "100%", display: "block" }} />
             {HOTSPOTS.map(([n, h, , x, y]) => (
               <div key={n} className="absolute -translate-x-1/2 -translate-y-1/2 group" style={{ left: `${x}%`, top: `${y}%` }}>
                 <div style={{ width: 26, height: 26, borderRadius: 13, background: AMB, color: INK, fontFamily: FD, fontWeight: 700, fontSize: 13 }} className="flex items-center justify-center shadow-lg cursor-default">{n}</div>
@@ -249,7 +249,7 @@ export default function Home() {
       <div style={{ background: PAPER, color: INK }} className="rounded-t-[32px]">
         <div className="mx-auto max-w-5xl px-6 py-16 sm:py-20">
           <div style={{ fontFamily: FD, fontWeight: 700, color: TEAL }} className="text-xs uppercase tracking-wide">What&apos;s real, what&apos;s modeled</div>
-          <h2 style={{ fontFamily: FD, fontWeight: 700 }} className="mt-2 text-2xl sm:text-4xl leading-tight">Waterloo Demo World is not a digital twin. That&apos;s a feature of the brand, not an apology.</h2>
+          <h2 style={{ fontFamily: FD, fontWeight: 700 }} className="mt-2 text-2xl sm:text-4xl leading-tight">Ontario Southwest Zone Sandbox is not a digital twin. That&apos;s a feature of the brand, not an apology.</h2>
           <div className="mt-8 overflow-hidden rounded-2xl" style={{ border: `1px solid ${LINE}` }}>
             {PROVENANCE.map(([k, v, c], i) => (
               <div key={k} className="flex items-start gap-4 px-5 py-4 text-sm" style={{ borderTop: i ? `1px solid ${LINE}` : undefined }}>
@@ -308,7 +308,7 @@ export default function Home() {
           <div className="mt-10 rounded-2xl p-7 sm:p-9 text-center" style={{ background: "#141814", border: "1px solid #2C332D" }}>
             <div style={{ fontFamily: FD, fontWeight: 700 }} className="text-2xl sm:text-3xl">Break a VPP before somebody deploys it.</div>
             <Link href="/sandbox" style={{ background: AMB, color: INK }} className="mt-6 inline-block rounded-full px-8 py-3.5 text-base font-semibold hover:opacity-90 transition">
-              Launch Waterloo Demo World →
+              Launch Ontario Southwest Zone Sandbox →
             </Link>
           </div>
         </div>

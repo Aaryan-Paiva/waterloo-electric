@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Waterloo Electric — flexible-grid sandbox",
-  description: "A live sandbox of a flexible Waterloo grid: drop in a data centre and watch devices rebalance the load. Planning simulation, not an engineering study.",
+  title: "CapacityOS — VPP stress-testing sandbox",
+  description: "A live sandbox for Ontario's IESO Southwest zone: drop in a data centre and watch whether a flexibility program can absorb it. Planning simulation, not an engineering study.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
