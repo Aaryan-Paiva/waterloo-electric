@@ -201,7 +201,7 @@ export function Sandbox() {
     <main style={{ minHeight: `calc(100vh - ${NAV_H}px)`, display: "flex", alignItems: "center", justifyContent: "center", background: "#1D2320", fontFamily: FB }}>
       <div role="alert" style={{ maxWidth: 520, padding: 28, borderRadius: 16, background: PAPER, color: INK }}>
         <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20 }}>The simulation isn&apos;t running</div>
-        <p style={{ fontSize: 14, lineHeight: 1.5 }}>Waterloo Electric couldn&apos;t reach its API. Start it, then try again:</p>
+        <p style={{ fontSize: 14, lineHeight: 1.5 }}>Waterloo Demo World couldn&apos;t reach its API. Start it, then try again:</p>
         <code style={{ display: "block", padding: 10, borderRadius: 8, background: "rgba(29,35,32,.07)", fontSize: 12 }}>cd apps/api &amp;&amp; .venv/bin/uvicorn src.main:app --port 8000</code>
         <button onClick={() => window.location.reload()} style={{ marginTop: 14, height: 36, padding: "0 16px", borderRadius: 18, border: 0, background: INK, color: PAPER, fontWeight: 600, cursor: "pointer" }}>Try again</button>
       </div>
@@ -224,8 +224,8 @@ export function Sandbox() {
           <Card t={t} x={24} y={24} w={352} h={104}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 34, height: 34, borderRadius: 10, background: AMB, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill={AMB} stroke={INK} strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg></div>
-              <div style={{ flexGrow: 1 }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, lineHeight: 1.1 }}>Waterloo Electric</div><div style={{ fontSize: 12, color: t.mut }}>Flexible-grid sandbox</div></div>
-              <button onClick={() => setHelp(true)} aria-label="How to use Waterloo Electric" style={{ width: 30, height: 30, borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontFamily: FD, fontWeight: 700, fontSize: 14, cursor: "pointer", flex: "none" }}>?</button>
+              <div style={{ flexGrow: 1 }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, lineHeight: 1.1 }}>Waterloo Demo World</div><div style={{ fontSize: 12, color: t.mut }}>CapacityOS sandbox</div></div>
+              <button onClick={() => setHelp(true)} aria-label="60-second tour" style={{ width: 30, height: 30, borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontFamily: FD, fontWeight: 700, fontSize: 14, cursor: "pointer", flex: "none" }}>?</button>
               <button onClick={() => { if (loads.length === 0 && Object.keys(params).every((k) => params[k as keyof DeviceParams] === DEFAULTS[k as keyof DeviceParams]) && !capOverride) return; reset(); }} aria-label="Reset the whole world" title="Reset the whole world" style={{ width: 30, height: 30, borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>
               </button>
@@ -589,31 +589,38 @@ function FixPane({ t, run, rec, busy, onApply, onCapacity }: { t: T; run: Sandbo
   );
 }
 
+const TOUR: [string, string, string][] = [
+  ["/guide/01-world.png", "Choose a condition", "Pick a season and hour, or play the day. Every world starts from a real historical Waterloo-zone demand day."],
+  ["/guide/02-tray.png", "Add new demand", "Drag a data centre, housing development, or EV depot onto an empty lot — up to four at once."],
+  ["/guide/04-editor.png", "Configure the VPP", "Set the rules you're testing: owner enrolment, incentive, battery reserve, EV flexibility, building comfort."],
+  ["/guide/06-log.png", "Owners decide, physics checks", "18 owner agents offer, decline, or revise. Every offer is checked against real device limits before OR-Tools dispatches it."],
+  ["/guide/05-result.png", "Read the result", "Holds, partly holds, or breaks — with the exact MW absorbed, remaining, and by which resource."],
+  ["/guide/07-fixit.png", "Fix it", "If it breaks: two verified pathways, each proven by rerunning the real day, not a guess."],
+];
+
 function HelpOverlay({ close }: { close: () => void }) {
-  const steps: [string, string][] = [
-    ["1. Drag a load onto an empty lot", "Data centre, housing or EV depot, from the tray on the right or the dock at the bottom. Up to four at once."],
-    ["2. Watch the grid respond", "18 owner agents decide whether to help; a physical check cuts offers their devices cannot deliver; an optimizer picks who does what."],
-    ["3. Read the result", "How much of the overload was absorbed, by which device type, and whether it holds, partly holds or breaks."],
-    ["4. Change the conditions", "Season and hour at the bottom, or Play the day. Each season is the real highest-demand day of 2021-2025."],
-    ["5. Edit the devices", "Counts, incentive, enrolment and limits. A run only changes after you edit and it reruns."],
-    ["6. Fix it", "If it breaks: two verified ways to close the gap, tightening the flexibility program or adding zone capacity. Every option is a real rerun."],
-    ["7. Log and Seasons", "Log shows every owner's decision. Seasons tests the same setup against all four."],
-  ];
+  const [i, setI] = useState(0);
+  const last = i === TOUR.length - 1;
+  const [img, h, b] = TOUR[i];
   return (
-    <div role="dialog" aria-modal="true" aria-label="How to use Waterloo Electric" style={{ position: "absolute", inset: 0, background: "rgba(20,24,20,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }} onClick={close}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 620, maxWidth: "92%", maxHeight: "86%", overflowY: "auto", borderRadius: 18, background: PAPER, color: INK, padding: 26, fontFamily: FB, boxShadow: "0 20px 60px rgba(0,0,0,.35)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 22 }}>How to use Waterloo Electric</div>
-          <button onClick={close} aria-label="Close" style={{ border: 0, background: "rgba(29,35,32,.07)", color: INK, width: 32, height: 32, borderRadius: 16, cursor: "pointer", fontSize: 16 }}>×</button>
+    <div role="dialog" aria-modal="true" aria-label="60-second tour" style={{ position: "absolute", inset: 0, background: "rgba(20,24,20,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: "92%", borderRadius: 18, background: PAPER, color: INK, overflow: "hidden", fontFamily: FB, boxShadow: "0 20px 60px rgba(0,0,0,.35)" }}>
+        <div style={{ position: "relative", width: "100%", aspectRatio: "1440/900", background: "#DCE6C8" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={img} alt={h} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          <button onClick={close} aria-label="Skip" style={{ position: "absolute", top: 10, right: 10, border: 0, background: "rgba(29,35,32,.55)", color: PAPER, width: 28, height: 28, borderRadius: 14, cursor: "pointer", fontSize: 15 }}>×</button>
         </div>
-        <p style={{ fontSize: 14, lineHeight: 1.5, marginTop: 6 }}>A testing ground for flexibility programs (VPPs): does a set of rules hold when new demand joins a Waterloo-shaped grid, in each season? Not a forecast, a recommendation engine, or a verdict on any real project.</p>
-        <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
-          {steps.map(([h, b]) => <div key={h}><b style={{ fontFamily: FD, fontSize: 14 }}>{h}</b><div style={{ fontSize: 13, color: "#4A4F45", marginTop: 2, lineHeight: 1.4 }}>{b}</div></div>)}
+        <div style={{ padding: 22 }}>
+          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 12, color: TEAL, textTransform: "uppercase", letterSpacing: .3 }}>60-second tour · {i + 1} / {TOUR.length}</div>
+          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, marginTop: 4 }}>{h}</div>
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginTop: 6, color: "#4A4F45" }}>{b}</p>
+          <div style={{ display: "flex", gap: 8, marginTop: 18, alignItems: "center" }}>
+            {i > 0 && <button onClick={() => setI((n) => n - 1)} style={{ height: 38, padding: "0 16px", borderRadius: 19, border: `1px solid ${LINE}`, background: "transparent", color: INK, fontWeight: 600, cursor: "pointer" }}>Back</button>}
+            <div style={{ flexGrow: 1 }} />
+            <button onClick={close} style={{ height: 38, padding: "0 14px", borderRadius: 19, border: 0, background: "transparent", color: "#8A8F82", fontWeight: 600, cursor: "pointer" }}>Skip</button>
+            <button onClick={() => (last ? close() : setI((n) => n + 1))} style={{ height: 38, padding: "0 20px", borderRadius: 19, border: 0, background: INK, color: PAPER, fontWeight: 600, cursor: "pointer" }}>{last ? "Start experimenting" : "Next"}</button>
+          </div>
         </div>
-        <div style={{ marginTop: 16, padding: 12, borderRadius: 10, background: "rgba(29,35,32,.06)", fontSize: 12, lineHeight: 1.5 }}>
-          <b>What&apos;s real and what isn&apos;t:</b> demand shape is real IESO data, derived; devices, owners and the 90 MW capacity are modeled; anything you drag in is hypothetical; every run is derived from them, not observed.
-        </div>
-        <button onClick={close} style={{ marginTop: 18, height: 40, padding: "0 20px", borderRadius: 20, border: 0, background: INK, color: PAPER, fontWeight: 600, cursor: "pointer" }}>Got it</button>
       </div>
     </div>
   );

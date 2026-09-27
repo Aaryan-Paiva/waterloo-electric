@@ -34,3 +34,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-geist-
 .btn[aria-pressed="true"] { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 600; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+@keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .55; transform: scale(.82); } }
+.pulse-dot { animation: pulseDot 1.8s ease-in-out infinite; }
+@keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.rise-in { animation: riseIn .5s ease-out both; }
