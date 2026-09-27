@@ -2,14 +2,14 @@
 
 ## Current Status
 - **Product now:** Waterloo Electric, a live isometric flexible-grid sandbox (see `PLAN.md`). The engine (Phases 0-7) underneath is unchanged and still tested.
-- **Current stage: Stage 4 (interaction and rebalance) — mostly done; Stage 5 (device editor) built in first form.** Next: Stage 6 polish, then Stage 7 freeze and submit.
+- **Current stage: Stage 6 (polish) — IN PROGRESS.** Stages 0-5 done. Next: Stage 7 freeze and submit.
 - Last verified: backend **156 passed** (pytest), web lint + `tsc` clean, browser-verified drop -> strain -> narrated rebalance -> result.
 - Known limitations: fleet size default 3x is an assumption; data-centre flexible compute not modeled; device inspector not built; not yet checked at projector size; nothing committed since the scaffold; OpenAI owners untested live beyond the earlier partial run.
 
 ### Stage tracker (updated as I build; times are wall clock, deadline Sun 12:00)
 | Stage | Scope | Status |
 |---|---|---|
-| 0 | Commit + remote | NOT STARTED (needs the user's go-ahead and repo) |
+| 0 | Commit + remote | DONE: https://github.com/Aaryan-Paiva/waterloo-electric (private until final check), commit 045008f, authored as Aaryan-Paiva |
 | 1 | Sandbox API on the existing engine | DONE (156 tests) |
 | 2 | Device parameters + fleet size | DONE in reduced form (78 physical models kept; sizes scaled by `fleetSizeX`; behavior overrides). More clusters and data-centre flexibility deferred |
 | 3 | Isometric world renderer | DONE (all seasons, night, states) |
