@@ -24,9 +24,12 @@ def test_size_bounds(bad):
         DataCenterProject(bad)
 
 
-def test_other_project_types_not_implemented_yet():
-    with pytest.raises(NotImplementedError):
+def test_housing_and_depot_are_profile_projects_and_need_a_24_hour_profile():
+    """Housing and EV depot arrived with the sandbox (projects/loads.py): they are hourly-profile loads; a profile of the wrong length is refused."""
+    with pytest.raises(ValueError):
         build_model(Project(id="p", type="housing", name="H", nominal_load_mw=5))
+    ok = build_model(Project(id="p", type="housing", name="H", nominal_load_mw=5, hourly_profile=[1.0] * 24))
+    assert ok.hourly_increment_mw(get_load("waterloo-demo").df["timestamp"].iloc[:5]).tolist() == [1.0] * 5
 
 
 def test_net_load_equation_and_baseline_untouched():

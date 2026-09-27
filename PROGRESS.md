@@ -3,7 +3,7 @@
 ## Current Status
 - **Product:** Waterloo Electric, a live isometric flexible-grid sandbox (see `PLAN.md`). Engine (Phases 0-7) unchanged and tested.
 - **Current stage: Stage C (live experience) next.** Stages 0, A, B done and committed.
-- Last verified: sandbox tests 18 passed; full backend suite run in progress at commit time (result below); web 15 passed, lint and tsc clean, production build clean; browser-verified multi-load, device counts, season test.
+- Last verified: sandbox tests 18 passed; full backend suite 162 passed + 1 stale Phase-2 test fixed right after (housing/EV depot are now implemented); web 15 passed, lint and tsc clean, production build clean; browser-verified multi-load, device counts, season test.
 - Known limitations: default owners are the deterministic policy until Stage C makes LLM owners the visible default; data-centre flexible compute not modeled; capacity 90 MW is still an assumption (Stage D: real station limit); live clock, asset log and optimizations pane not built yet.
 
 ### Stage tracker (updated as I build; times are wall clock, deadline Sun 12:00)
