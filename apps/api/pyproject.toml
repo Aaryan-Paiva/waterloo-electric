@@ -1,0 +1,22 @@
+[project]
+name = "capacityos-api"
+version = "0.1.0"
+description = "CapacityOS API: agent-based local-grid capacity planning sandbox (Phase 0-6)"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "pandas>=2.2",
+  "numpy>=1.26",
+  "pyarrow>=16",
+  "ortools>=9.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+openai = ["openai>=1.50"]   # optional: OWNER_AGENT_PROVIDER=openai (the stub provider needs nothing)
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

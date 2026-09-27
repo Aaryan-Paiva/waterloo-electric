@@ -1,0 +1,44 @@
+{
+  "id": "waterloo-demo",
+  "name": "Waterloo Demo Zone",
+  "label": "Waterloo-area synthetic capacity zone",
+  "timezone": "America/Toronto",
+  "historical_load": {
+    "dataset_id": "ieso-southwest-zonal-2021-2025",
+    "source_name": "IESO Hourly Zonal Demand Report, Southwest zone (observed, 2021-2025)",
+    "source_url": "https://reports-public.ieso.ca/public/DemandZonal/",
+    "raw_files": [
+      "ieso_zonal_2021.csv",
+      "ieso_zonal_2022.csv",
+      "ieso_zonal_2023.csv",
+      "ieso_zonal_2024.csv",
+      "ieso_zonal_2025.csv"
+    ],
+    "column": "Southwest",
+    "years": [2021, 2022, 2023, 2024, 2025],
+    "source_timezone": "EST (fixed UTC-5), hour-ending 1..24",
+    "source_timezone_verified": false,
+    "scale": {
+      "method": "scale_to_peak",
+      "target_peak_mw": 78.0,
+      "note": "No observed Waterloo-only hourly series exists. The observed hourly SHAPE of IESO's Southwest zone (which contains Waterloo) is scaled so its 5-year peak equals 78 MW, giving a demo-zone-sized baseline. Result is DERIVED, not observed Waterloo demand."
+    },
+    "provenance": "derived"
+  },
+  "capacity": {
+    "value_mw": 90.0,
+    "provenance": "modeled",
+    "source_note": "Hackathon assumption. No public source provides a real local capacity for this demo zone."
+  },
+  "der_seed": 42017,
+  "der_assumptions": {
+    "ev_participation": 0.35,
+    "battery_participation": 0.40,
+    "building_participation": 0.25
+  },
+  "fixture": {
+    "file": "waterloo_demo_load_30d.json",
+    "days": 30,
+    "anchor": "window centred on the 2025 annual peak hour of the scaled series"
+  }
+}
