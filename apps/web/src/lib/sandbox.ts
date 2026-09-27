@@ -10,7 +10,7 @@ export interface DeviceParams {
 export type Group = "battery" | "ev" | "building";
 export interface ScriptStep { i: number; kind: "request" | "owner_offer" | "owner_decline" | "validation_fail" | "revision" | "accepted" | "clearing" | "dispatch" | "done"; text: string; ownerId?: string | null; ownerName?: string | null; group?: Group | null; mw?: number | null; price?: number | null; loadAfterMw?: number | null }
 export interface SandboxRun {
-  season: Season; hour: number; dateUsed: string; focusTimestamp: string; dcMw: number; loads: LoadSpec[]; baseMw: number; loadBeforeMw: number; loadAfterMw: number; capacityMw: number; overloadMw: number; hasOverload: boolean;
+  season: Season; hour: number; capacityOverrideMw?: number | null; dateUsed: string; focusTimestamp: string; dcMw: number; loads: LoadSpec[]; baseMw: number; loadBeforeMw: number; loadAfterMw: number; capacityMw: number; overloadMw: number; hasOverload: boolean;
   absorbedMw: number; remainingMw: number; outcome: "holds" | "partly_holds" | "breaks" | "no_overload"; outcomeText: string; dispatchByGroup: Record<Group, number>; script: ScriptStep[];
   curve: { hours: number[]; before: number[]; after: number[] }; ownersTotal: number; ownersAccepted: number; eventEnergyBeforeMwh: number; eventEnergyAfterMwh: number;
   decisionSource: string; checksPassed: boolean; paramsApplied: string[]; paramsPending: string[]; runId?: string | null; provenance: Record<string, string>; note: string;
@@ -27,9 +27,10 @@ export interface SandboxWorldInfo {
 export async function fetchSandboxWorld(): Promise<SandboxWorldInfo> {
   const r = await fetch(`${API_URL}/api/sandbox/world`, { cache: "no-store" }); if (!r.ok) throw new Error(`world ${r.status}`); return r.json();
 }
-type RunBody = { season: Season; hour: number; loads: LoadSpec[]; provider: "stub" | "openai"; incentivePerMwh: number; deviceParams: DeviceParams };
+type RunBody = { season: Season; hour: number; loads: LoadSpec[]; provider: "stub" | "openai"; incentivePerMwh: number; deviceParams: DeviceParams; capacityMw?: number | null };
 /** Streams the run: `onOwner` fires as each owner's decision returns (real LLM calls take seconds), then resolves with the full result. */
-export async function postSandboxRunStream(body: RunBody, onOwner: (p: OwnerProgress) => void): Promise<SandboxRun> {
+export type RunBody2 = RunBody & { capacityMw?: number | null };
+export async function postSandboxRunStream(body: RunBody2, onOwner: (p: OwnerProgress) => void): Promise<SandboxRun> {
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 120000);
   try {
     const r = await fetch(`${API_URL}/api/sandbox/run-stream`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: ctl.signal });
@@ -55,7 +56,7 @@ export interface SeasonCell {
   remainingMw: number; hoursOverBefore: number; hoursOverAfter: number; hourStates: CellState[]; periods: Record<"morning" | "afternoon" | "evening", CellState>; decisionSource: string; ownersAccepted: number; ownersTotal: number;
 }
 export interface Matrix { capacityMw: number; loads: LoadSpec[]; cells: SeasonCell[]; note: string }
-export async function postMatrix(body: { loads: LoadSpec[]; provider: "stub" | "openai"; incentivePerMwh: number; deviceParams: DeviceParams }): Promise<Matrix> {
+export async function postMatrix(body: { loads: LoadSpec[]; provider: "stub" | "openai"; incentivePerMwh: number; deviceParams: DeviceParams; capacityMw?: number | null }): Promise<Matrix> {
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 120000);
   try {
     const r = await fetch(`${API_URL}/api/sandbox/matrix`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: ctl.signal });
@@ -63,5 +64,19 @@ export async function postMatrix(body: { loads: LoadSpec[]; provider: "stub" | "
     return await r.json();
   } catch (e) {
     throw new Error(e instanceof DOMException && e.name === "AbortError" ? "The season test took too long." : e instanceof Error ? e.message : "Could not reach the simulation.");
+  } finally { clearTimeout(timer); }
+}
+
+export interface ConstraintPathway { title: string; changes: string[]; deviceParams: DeviceParams; incentivePerMwh: number; outcome: SandboxRun["outcome"]; absorbedMw: number; remainingMw: number; holds: boolean }
+export interface CapacityPathway { currentMw: number; neededMw: number; increaseMw: number; neededWithoutFlexMw: number; flexDefersMw: number; verified: boolean }
+export interface RecommendResponse { season: Season; dateUsed: string; peakHour: number; capacityMw: number; overloadMw: number; remainingMw: number; alreadyHolds: boolean; runsTested: number; constraintPathways: ConstraintPathway[]; capacityPathway: CapacityPathway | null; note: string }
+export async function postRecommend(body: { season: Season; hour: number; loads: LoadSpec[]; incentivePerMwh: number; deviceParams: DeviceParams; capacityMw?: number | null }): Promise<RecommendResponse> {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 150000);
+  try {
+    const r = await fetch(`${API_URL}/api/sandbox/recommend`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: ctl.signal });
+    if (!r.ok) throw new Error(`The recommendation search returned an error (${r.status}).`);
+    return await r.json();
+  } catch (e) {
+    throw new Error(e instanceof DOMException && e.name === "AbortError" ? "The recommendation search took too long." : e instanceof Error ? e.message : "Could not reach the simulation.");
   } finally { clearTimeout(timer); }
 }

@@ -15,7 +15,8 @@ def scenario_frame(scenario: Scenario) -> tuple[pd.DataFrame, float, str, str]:
     """Net-load frame over the full history. The stored baseline is never mutated."""
     data, pack = get_load(scenario.zone_id), get_pack(scenario.zone_id)
     df = net_load(data.df, [build_model(p) for p in scenario.projects])
-    return df, pack.capacity.value_mw, pack.capacity.provenance, data.mode
+    cap = float(scenario.assumption_overrides.get("capacityMw", pack.capacity.value_mw))       # sandbox what-if: a different zone limit
+    return df, cap, pack.capacity.provenance if cap == pack.capacity.value_mw else "user_assumption", data.mode
 
 
 def run_capacity_analysis(scenario: Scenario) -> CapacityAnalysis:

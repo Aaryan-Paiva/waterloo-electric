@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IsoWorld } from "@/components/iso/IsoWorld";
 import { ANCHORS, H, W, lotAt, type Phase, type Season } from "@/components/iso/scene";
-import { fetchSandboxWorld, fetchWorldFor, postMatrix, postSandboxRunStream, type OwnerProgress, type CellState, type DeviceParams, type Matrix, type SeasonCell, type Group, type LoadKind, type SandboxRun, type SandboxWorldInfo, type ScriptStep } from "@/lib/sandbox";
+import { fetchSandboxWorld, fetchWorldFor, postMatrix, postSandboxRunStream, postRecommend, type OwnerProgress, type RecommendResponse, type CellState, type DeviceParams, type Matrix, type SeasonCell, type Group, type LoadKind, type SandboxRun, type SandboxWorldInfo, type ScriptStep } from "@/lib/sandbox";
 import { changeNote, derivePhase, gaugeLoad, hourLabel, nightOf } from "@/lib/sandboxLogic";
 
 const INK = "#1D2320", PAPER = "#FBF7EE", LINE = "#D9D1BE", AMB = "#F2A72E", TEAL = "#1F9E89", CORAL = "#E5533D", BLUE = "#3F86D8", VIO = "#8C7AE0";
@@ -40,6 +40,9 @@ export function Sandbox() {
   const [trayOpen, setTrayOpen] = useState(false);
   const [tab, setTab] = useState<TabKey>("result");
   const [incentive, setIncentive] = useState(100);
+  const [capOverride, setCapOverride] = useState<number | null>(null);
+  const [rec, setRec] = useState<{ key: string; data: RecommendResponse } | null>(null);
+  const [recBusy, setRecBusy] = useState(false);
   const [live, setLive] = useState<OwnerProgress[]>([]);
   const [clock, setClock] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -88,29 +91,29 @@ export function Sandbox() {
     const id = ++reqId.current;
     const h = setTimeout(() => {
       setBusy(true); setRun(null); setProg(0); setLive([]);
-      postSandboxRunStream({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), provider, incentivePerMwh: incentive, deviceParams: params }, (p) => { if (id === reqId.current) setLive((l) => [...l, p]); })
+      postSandboxRunStream({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), provider, incentivePerMwh: incentive, deviceParams: params, capacityMw: capOverride }, (p) => { if (id === reqId.current) setLive((l) => [...l, p]); })
         .then((r) => { if (id === reqId.current) { const o = lastDone.current; setPrev(o); setRun(r); setProg(0); setErr(null); setTab("result");
           setHistory((h) => [...h, { n: ++histN.current, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), params, provider, season, hour, outcome: r.outcome, overloadMw: r.overloadMw, absorbedMw: r.absorbedMw, remainingMw: r.remainingMw, source: r.decisionSource }]); } })
         .catch((e) => id === reqId.current && setErr(String(e)))
         .finally(() => id === reqId.current && setBusy(false));
     }, 350);
     return () => clearTimeout(h);
-  }, [loads, season, hour, params, provider, incentive, world, retry]);
+  }, [loads, season, hour, params, provider, incentive, capOverride, world, retry]);
 
   // the season test: the same loads and settings against each season's real day (fetched when the Seasons tab is open)
-  const cfgKey = JSON.stringify([loads.map((l) => [l.kind, l.size]), params, provider, incentive]);
+  const cfgKey = JSON.stringify([loads.map((l) => [l.kind, l.size]), params, provider, incentive, capOverride]);
   useEffect(() => {
     if (tab !== "seasons" || loads.length === 0 || (matrix && matrix.key === cfgKey)) return;
     let live = true;
     const h = setTimeout(() => {
       setMatrixBusy(true);
-      postMatrix({ loads: loads.map((l) => ({ kind: l.kind, size: l.size })), provider, incentivePerMwh: incentive, deviceParams: params })
+      postMatrix({ loads: loads.map((l) => ({ kind: l.kind, size: l.size })), provider, incentivePerMwh: incentive, deviceParams: params, capacityMw: capOverride })
         .then((d) => live && setMatrix({ key: cfgKey, data: d }))
         .catch((e) => live && setErr(String(e.message ?? e)))
         .finally(() => live && setMatrixBusy(false));
     }, 200);
     return () => { live = false; clearTimeout(h); };
-  }, [tab, cfgKey, loads, provider, params, incentive, matrix]);
+  }, [tab, cfgKey, loads, provider, params, incentive, capOverride, matrix]);
 
   // real totals for the device configuration the user built (debounced)
   useEffect(() => {
@@ -130,13 +133,28 @@ export function Sandbox() {
   useEffect(() => { if (run && finished && run.hasOverload) lastDone.current = { absorbed: run.absorbedMw, remaining: run.remainingMw }; }, [run, finished]);
   const last = visible[visible.length - 1];
 
+  // "Fix it" tab: a verified search for constraint changes and a capacity what-if (fetched when the tab opens; recomputed only if the underlying run changed)
+  const recKey = JSON.stringify([loads.map((l) => [l.kind, l.size]), params, incentive, capOverride, season, hour]);
+  useEffect(() => {
+    if (tab !== "fix" || loads.length === 0 || !finished || (rec && rec.key === recKey)) return;
+    let live2 = true;
+    const h = setTimeout(() => {
+      setRecBusy(true);
+      postRecommend({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size })), incentivePerMwh: incentive, deviceParams: params, capacityMw: capOverride })
+        .then((d) => live2 && setRec({ key: recKey, data: d }))
+        .catch((e) => live2 && setErr(String(e.message ?? e)))
+        .finally(() => live2 && setRecBusy(false));
+    }, 50);
+    return () => { live2 = false; clearTimeout(h); };
+  }, [tab, recKey, loads, season, hour, incentive, capOverride, params, finished, rec]);
+
   useEffect(() => {
     if (!speak || !last || typeof speechSynthesis === "undefined") return;
     if (["request", "validation_fail", "dispatch", "done"].includes(last.kind)) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(last.text)); }
   }, [last, speak]);
 
   const base = world ? world.seasons[season].hourlyBaselineMw[hour] : 78;
-  const capacity = world?.capacityMw ?? 90;
+  const capacity = capOverride ?? world?.capacityMw ?? 90;
   const cleared = visible.some((s) => s.kind === "clearing");
   const lastDispatch = [...visible].reverse().find((s) => s.kind === "dispatch");
   const loadStatic = gaugeLoad({ run, placed: loads.length > 0, finished, lastDispatchLoad: lastDispatch?.loadAfterMw, base, dcMw: loads.filter((l) => l.kind === "data_centre").reduce((a, l) => a + l.size, 0) });
@@ -193,7 +211,7 @@ export function Sandbox() {
               <div><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, lineHeight: 1.1 }}>Waterloo Electric</div><div style={{ fontSize: 12, color: t.mut }}>Flexible-grid sandbox</div></div>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
-              {([[TEAL, "Demand: real shape, derived"], [AMB, "Devices: synthetic"], ["#9AA0A6", "Capacity: assumed"]] as const).map(([c, l]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 22, padding: "0 9px", borderRadius: 11, background: t.sub, fontSize: 11, color: t.mut }}><Dot c={c} />{l}</span>)}
+              {([[TEAL, "Demand: real shape, derived"], [AMB, "Devices: synthetic"], [capOverride ? CORAL : "#9AA0A6", capOverride ? `Capacity: your assumption (${capOverride} MW)` : "Capacity: assumed"]] as const).map(([c, l]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 22, padding: "0 9px", borderRadius: 11, background: t.sub, fontSize: 11, color: t.mut }}><Dot c={c} />{l}</span>)}
             </div>
           </Card>
 
@@ -217,9 +235,10 @@ export function Sandbox() {
           {!inspect && !trayOpen && !drawer && run && (finished || tab !== "result") && <Tabs t={t} tab={tab} setTab={setTab} count={history.length} />}
           {!inspect && !trayOpen && !drawer && tab === "seasons" && run && (finished || true) && <Seasons t={t} matrix={matrix && matrix.key === cfgKey ? matrix.data : null} busy={matrixBusy} capacity={capacity} onPick={(c) => { setSeason(c.season); setHour(c.peakHour); setTab("result"); }} />}
           {!inspect && !trayOpen && !drawer && tab === "log" && run && <LogPane t={t} run={run} />}
+          {!inspect && !trayOpen && !drawer && tab === "fix" && run && <FixPane t={t} run={run} rec={rec && rec.key === recKey ? rec.data : null} busy={recBusy} onApply={(p) => { setParams(p.deviceParams); setIncentive(p.incentivePerMwh); setTab("result"); }} onCapacity={(mw) => { setCapOverride(mw); setTab("result"); }} />}
           {!inspect && !trayOpen && !drawer && tab === "history" && <History t={t} history={history} onRestore={(h) => { setLoads(h.loads.map((l) => ({ id: `l${nextId.current++}`, kind: l.kind, size: l.size, lot: l.lot }))); setParams(h.params); setProvider(h.provider); setSeason(h.season); setHour(h.hour); setTab("result"); }} />}
           {!inspect && !trayOpen && !drawer && tab === "result" && run && finished && <Result t={t} run={run} note={changeNote(prev, run)} onLoads={() => setTrayOpen(true)} onEdit={() => setDrawer(true)} onSeason={(s) => { setSeason(s); setHour(s === "winter" ? 18 : 14); }} reset={reset} />}
-          {drawer && <Drawer t={t} incentive={incentive} setIncentive={setIncentive} llm={world?.llmAvailable ?? false} params={params} setP={setP} provider={provider} setProvider={setProvider} world={devWorld ?? world} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
+          {drawer && <Drawer t={t} capOverride={capOverride} setCapOverride={setCapOverride} incentive={incentive} setIncentive={setIncentive} llm={world?.llmAvailable ?? false} params={params} setP={setP} provider={provider} setProvider={setProvider} world={devWorld ?? world} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
 
           {/* owner speech bubbles anchored to the real device groups */}
           {run && !finished && (["battery", "ev", "building"] as Group[]).map((g, gi) => {
@@ -371,7 +390,7 @@ function Slider({ t, label, value, min, max, step, unit, set, note }: { t: T; la
   return <label style={{ display: "block", marginTop: 8 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span>{label}</span><b style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}{unit}</b></div>
     <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => set(+e.target.value)} style={{ width: "100%", accentColor: TEAL, margin: "4px 0 0" }} aria-label={label} />{note && <div style={{ fontSize: 11, color: t.mut }}>{note}</div>}</label>;
 }
-function Drawer({ t, incentive, setIncentive, llm, params: p, setP, provider, setProvider, world, close, defaults }: { t: T; incentive: number; setIncentive: (n: number) => void; llm: boolean; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; world: SandboxWorldInfo | null; close: () => void; defaults: DeviceParams }) {
+function Drawer({ t, capOverride, setCapOverride, incentive, setIncentive, llm, params: p, setP, provider, setProvider, world, close, defaults }: { t: T; capOverride: number | null; setCapOverride: (n: number | null) => void; incentive: number; setIncentive: (n: number) => void; llm: boolean; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; world: SandboxWorldInfo | null; close: () => void; defaults: DeviceParams }) {
   const sec = (title: string, sub: string) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 10, borderTop: `1px solid ${t.ln}` }}><b style={{ fontFamily: FD, fontSize: 15 }}>{title}</b><span style={{ fontSize: 11, color: t.mut }}>{sub}</span></div>;
   const dd = world?.deviceDetails;
   return (
@@ -396,6 +415,9 @@ function Drawer({ t, incentive, setIncentive, llm, params: p, setP, provider, se
       <Slider t={t} label="Longest curtailment" value={p.buildingMaxHours} min={1} max={6} step={1} unit=" h" set={(v) => setP("buildingMaxHours", v)} />
       <Slider t={t} label="Rebound afterwards" value={p.reboundPct} min={30} max={100} step={10} unit="%" set={(v) => setP("reboundPct", v)} />
       <div style={{ fontSize: 12, color: t.mut, marginTop: 10 }}>Load sizes are set on each load in the tray. A data centre&apos;s own flexible compute: next.</div>
+      {sec("Zone capacity", "what-if")}
+      <Slider t={t} label="Zone limit" value={capOverride ?? 90} min={40} max={200} step={5} unit=" MW" set={setCapOverride} note={capOverride ? "user assumption, overrides the 90 MW model" : "at 90, the modeled default"} />
+      {capOverride !== null && <button onClick={() => setCapOverride(null)} style={{ marginTop: 6, height: 30, padding: "0 12px", borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontSize: 12, cursor: "pointer" }}>Reset to the modeled 90 MW</button>}
       {sec("Owner agents", "who decides")}
       <select value={provider} onChange={(e) => setProvider(e.target.value as "stub" | "openai")} aria-label="Owner agent provider" style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${t.ln}`, background: t.sub, color: t.fg, marginTop: 8, padding: "0 8px" }}>
         <option value="openai" disabled={!llm}>Real LLM owners (OpenAI){llm ? "" : " — no key configured"}</option><option value="stub">Deterministic policy (instant, no API)</option>
@@ -427,9 +449,9 @@ function Inspector({ t, world, which, run, fleet, close }: { t: T; world: Sandbo
   );
 }
 
-type TabKey = "result" | "seasons" | "log" | "history";
+type TabKey = "result" | "seasons" | "log" | "fix" | "history";
 function Tabs({ t, tab, setTab, count }: { t: T; tab: TabKey; setTab: (x: TabKey) => void; count: number }) {
-  const items: [TabKey, string][] = [["result", "Result"], ["seasons", "Seasons"], ["log", "Log"], ["history", `Runs (${count})`]];
+  const items: [TabKey, string][] = [["result", "Result"], ["seasons", "Seasons"], ["log", "Log"], ["fix", "Fix it"], ["history", `Runs (${count})`]];
   return <div role="tablist" style={{ position: "absolute", left: 1096, top: 24, width: 320, display: "flex", gap: 6 }}>
     {items.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} style={{ flex: 1, height: 34, borderRadius: 17, fontSize: 13, fontWeight: 600, cursor: "pointer", border: `1px solid ${tab === k ? "transparent" : t.ln}`, background: tab === k ? t.fg : t.bg, color: tab === k ? (t.dark ? INK : PAPER) : t.fg }}>{l}</button>)}
   </div>;
@@ -506,6 +528,42 @@ function LogPane({ t, run }: { t: T; run: SandboxRun }) {
               {o.explanation && <div style={{ fontSize: 11, marginTop: 3, lineHeight: 1.35 }}>{o.explanation}</div>}
             </div>); })}
         </div>
+      </>}
+    </Card>
+  );
+}
+
+function FixPane({ t, run, rec, busy, onApply, onCapacity }: { t: T; run: SandboxRun; rec: RecommendResponse | null; busy: boolean; onApply: (p: { deviceParams: DeviceParams; incentivePerMwh: number }) => void; onCapacity: (mw: number) => void }) {
+  if (!run.hasOverload) return (
+    <Card t={t} x={1096} y={66} w={320} h={702}>
+      <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Nothing to fix</div>
+      <div style={{ fontSize: 13, color: t.mut, marginTop: 8, lineHeight: 1.45 }}>This hour is already within capacity, so there is nothing for the constraints or a capacity change to resolve.</div>
+    </Card>
+  );
+  return (
+    <Card t={t} x={1096} y={66} w={320} h={702} scroll>
+      <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>What would it take?</div>
+      <div style={{ fontSize: 12, color: t.mut, margin: "2px 0 10px", lineHeight: 1.4 }}>Two ways to close the {run.remainingMw.toFixed(1)} MW gap: change the flexibility program, or add capacity. Every option here was verified by rerunning the real day.</div>
+      {busy && <div role="status" style={{ padding: "16px 0", fontSize: 13, color: t.mut }}>Searching and rerunning candidates (up to a minute)…</div>}
+      {rec && <>
+        <div style={{ fontSize: 11, color: t.mut, marginBottom: 10 }}>{rec.runsTested} rerun{rec.runsTested === 1 ? "" : "s"} tried, each on {rec.dateUsed} ({cap(rec.season)}).</div>
+        <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 14, marginTop: 4 }}>1. Change the constraints</div>
+        {rec.constraintPathways.length === 0 && <div style={{ fontSize: 13, color: t.mut, margin: "6px 0 14px" }}>No change within the sandbox&apos;s limits closed the gap alone.</div>}
+        {rec.constraintPathways.map((p, i) => (
+          <div key={i} style={{ marginTop: 8, padding: "10px 12px", borderRadius: 12, border: `1px solid ${t.ln}`, background: t.sub }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><b style={{ fontFamily: FD, fontSize: 13 }}>{p.title}</b><Pill bg={p.holds ? "#CDEFE6" : "#FCE9C4"} fg={p.holds ? "#0B5C4C" : "#7A4B00"}>{p.holds ? "Holds" : "Still short"}</Pill></div>
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12, lineHeight: 1.5 }}>{p.changes.map((c, j) => <li key={j}>{c}</li>)}</ul>
+            <div style={{ fontSize: 12, marginTop: 6 }}>{p.absorbedMw.toFixed(1)} MW absorbed{p.remainingMw > 0.05 ? `, ${p.remainingMw.toFixed(1)} MW still over` : ""}</div>
+            <button onClick={() => onApply({ deviceParams: p.deviceParams, incentivePerMwh: p.incentivePerMwh })} style={{ marginTop: 8, height: 30, padding: "0 12px", borderRadius: 15, border: 0, background: t.fg, color: t.dark ? INK : PAPER, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Apply to the world</button>
+          </div>
+        ))}
+        <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 14, marginTop: 16 }}>2. Add capacity instead</div>
+        {rec.capacityPathway && <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 12, border: `1px solid ${t.ln}`, background: t.sub }}>
+          <div style={{ fontSize: 13 }}>Raising the zone limit from <b>{rec.capacityPathway.currentMw}</b> to <b>{rec.capacityPathway.neededMw}</b> MW (+{rec.capacityPathway.increaseMw.toFixed(1)} MW) keeps this day within capacity, with the current flexibility still helping.</div>
+          <div style={{ fontSize: 12, color: t.mut, marginTop: 6 }}>Without any flexible response at all, the zone would need {rec.capacityPathway.neededWithoutFlexMw} MW. The flexibility above defers {rec.capacityPathway.flexDefersMw.toFixed(1)} MW of that upgrade.</div>
+          <button onClick={() => onCapacity(rec.capacityPathway!.neededMw)} style={{ marginTop: 8, height: 30, padding: "0 12px", borderRadius: 15, border: 0, background: t.fg, color: t.dark ? INK : PAPER, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Try this limit</button>
+        </div>}
+        <div style={{ fontSize: 11, color: t.mut, marginTop: 12, lineHeight: 1.4 }}>{rec.note}</div>
       </>}
     </Card>
   );

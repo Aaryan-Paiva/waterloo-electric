@@ -133,3 +133,11 @@ Next: Stage C.
 - `scripts/warm_cache.py` pre-runs 3 demo scenarios with the real LLM so the demo replays instantly.
 - Projector check: fits 1280x720 without scroll (stage scales 0.8x); scale is min(width/1440, (height-24)/900).
 - Cut: real Waterloo station limit (no verified source; capacity stays labelled Modeled/assumed).
+
+## Stage D: recommendation engine ("Fix it")
+- Two verified pathways, both real reruns of the day, never estimates: (1) constraint changes to the flexibility program — enrolment, incentive, min price, device counts, battery reserve, EV shiftable share, building comfort — tried as single levers first, then the strongest levers combined (pairs, then +1 more) if no single change is enough; (2) the smallest zone-capacity increase that holds with the current flexibility, plus how much of that upgrade the flexibility already defers vs. no flexibility at all.
+- New: `POST /api/sandbox/recommend`, `capacityMw` override on `/run` and `/matrix` (labelled `user_assumption`, not `modeled`, when set); a "Zone limit" slider in the device editor; a "Fix it" tab with Apply-to-world and Try-this-limit buttons.
+- Search always uses the fast deterministic owner policy (not real LLM: 20-30 reruns per search would be too slow/costly), labelled as such; real-LLM owners may behave differently, which is stated in the panel.
+- Bug the search surfaced and fixed: a real-LLM owner controlling 42 assets crashed on submit_offer's 40-item cap (schemas/owners.py `SubmitOffer`/`RequestInformation` max_length raised to 200). Caught by the search hammering high device counts, not by manual testing — a good example of why to build this.
+- Tests: 175 backend passed (5 new: already-holds no-op, verified pathways, capacity-pathway rerun, capacity override changes result + provenance, the route). Browser-verified: search runs (~35-45s, 20-25 reruns), constraint pathway shown even when insufficient, capacity pathway "Try this limit" applies and reruns correctly labelled as a user assumption.
+- Known limits: search runs 20-30 s to a minute; only levers already below their bound are offered; the acceptance-scenario constraint pathway does not fully close the gap in the current search (capacity pathway does, verified).

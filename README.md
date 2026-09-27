@@ -14,10 +14,11 @@ Connecting big new loads (AI data centres, EV depots, housing) to the grid takes
 
 ## What you can do
 - **Drag a data centre** (5-60 MW) onto an empty lot. The zone strains against a 90 MW modeled capacity.
+- **Fix it:** two verified ways to close a remaining gap: 1) constraint changes to the flexibility program (enrolment, incentive, device counts, reserve, shiftable share, comfort), tried alone and combined; 2) the smallest zone-capacity increase that would hold, and how much of that upgrade the flexibility already defers. Every pathway shown is a real rerun of that day, never a guess.
 - **Watch it rebalance:** 18 owner agents (real LLM agents when an OpenAI key is configured, a labelled deterministic policy otherwise) offer or decline as their decisions stream in, a physical check reduces impossible offers (battery charge, EV departure deadlines, building comfort), and an OR-Tools optimizer decides who does what. Speech bubbles, captions and optional spoken narration follow it. The **Log** tab shows every owner's decision, its own explanation and the optimizer's summary. **Play the day** sweeps the real reference day.
 - **Read the result:** how much of the overload was absorbed, by device type, a before/after chart of the real day, and a plain label (holds / partly holds / breaks). It states what happened in the simulation, not a real-world verdict.
 - **Change the conditions:** four seasons and a time-of-day slider. Each season replays the real highest-demand day of 2021-2025 for that season.
-- **Edit the devices:** device counts, incentive ($/MWh), fleet size, owners enrolled, owners' minimum price, battery reserve, EV shiftable share, allowed temperature offset, longest curtailment, rebound. A "what changed" line compares with the previous run.
+- **Edit the devices:** device counts, incentive ($/MWh), a zone-capacity what-if, fleet size, owners enrolled, owners' minimum price, battery reserve, EV shiftable share, allowed temperature offset, longest curtailment, rebound. A "what changed" line compares with the previous run.
 - **Inspect a device type** (click a legend row or a cluster): what it does, size, owners, limits and its contribution in the current run.
 
 ## Data honesty (labelled on screen)
@@ -28,6 +29,7 @@ Connecting big new loads (AI data centres, EV depots, housing) to the grid takes
 | 78 device clusters (batteries, EV fleets, buildings, solar) and 18 owners | **Modeled** (synthetic, seeded; a cluster stands for many units) |
 | Data centre | **Hypothetical** |
 | Runs and results | **Derived** |
+| A capacity what-if you set (Fix it -> Try this limit, or the editor slider) | **User assumption** |
 
 Fleet size (default 3x, 1x = up to 25% of load controllable) is an explicit assumption you can edit. IESO timestamps are treated as fixed EST (unverified convention).
 

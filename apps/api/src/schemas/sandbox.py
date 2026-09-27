@@ -46,6 +46,7 @@ class SandboxRunRequest(CamelModel):
     provider: Literal["stub", "openai"] = "stub"
     incentive_per_mwh: float = Field(default=100, gt=0, le=1000)
     device_params: DeviceParams = Field(default_factory=DeviceParams)
+    capacity_mw: Optional[float] = Field(default=None, ge=40, le=250)      # what-if zone limit; None = the modeled 90 MW
 
 
 class OwnerLog(CamelModel):
@@ -176,6 +177,7 @@ class MatrixRequest(CamelModel):
     provider: Literal["stub", "openai"] = "stub"
     incentive_per_mwh: float = Field(default=100, gt=0, le=1000)
     device_params: DeviceParams = Field(default_factory=DeviceParams)
+    capacity_mw: Optional[float] = Field(default=None, ge=40, le=250)
 
 
 class SeasonCell(CamelModel):
@@ -205,3 +207,37 @@ class MatrixResponse(CamelModel):
     params_applied: list[str]
     note: str
     provenance: dict[str, str]
+
+
+class ConstraintPathway(CamelModel):
+    title: str
+    changes: list[str]                   # plain-language, e.g. "Owners enrolled 60% -> 100%"
+    device_params: DeviceParams          # the full parameter set with the changes applied
+    incentive_per_mwh: float
+    outcome: Outcome
+    absorbed_mw: float
+    remaining_mw: float
+    holds: bool                          # verified by a full rerun of that day
+
+
+class CapacityPathway(CamelModel):
+    current_mw: float
+    needed_mw: float                     # smallest zone limit (to 0.5 MW) at which the day stays within capacity, WITH the current flexibility
+    increase_mw: float
+    needed_without_flex_mw: float        # the same, if nothing flexible acted
+    flex_defers_mw: float                # upgrade avoided by the flexibility
+    verified: bool
+
+
+class RecommendResponse(CamelModel):
+    season: Season
+    date_used: str
+    peak_hour: int
+    capacity_mw: float
+    overload_mw: float
+    remaining_mw: float
+    already_holds: bool
+    runs_tested: int
+    constraint_pathways: list[ConstraintPathway]
+    capacity_pathway: Optional[CapacityPathway] = None
+    note: str

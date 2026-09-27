@@ -79,7 +79,7 @@ class AssetOffer(CamelModel):
 
 
 class OfferBody(CamelModel):
-    asset_offers: list[AssetOffer] = Field(min_length=1, max_length=40)
+    asset_offers: list[AssetOffer] = Field(min_length=1, max_length=200)
     price_per_mwh: float
     conditions: list[str] = Field(default_factory=list, max_length=6)
     explanation: str = Field(default="", max_length=600)
@@ -101,7 +101,7 @@ class DeclineOffer(CamelModel):
 
 class RequestInformation(CamelModel):
     tool: Literal["request_information"] = "request_information"
-    asset_ids: list[str] = Field(default_factory=list, max_length=40)
+    asset_ids: list[str] = Field(default_factory=list, max_length=200)
 
 
 OwnerAction = Union[SubmitOffer, ReviseOffer, DeclineOffer]

@@ -227,3 +227,42 @@ def test_run_stream_endpoint_returns_result_line():
 
 def test_world_reports_llm_availability_flag():
     assert isinstance(world_info().llm_available, bool)
+
+
+# ---- Stage D: recommendations (constraints + capacity), verified by rerun --------------------------------------------------
+def test_recommend_no_overload_is_a_clean_no_op():
+    from src.capacityos.recommend import recommend
+    r = recommend(SandboxRunRequest(season="winter", hour=3, dc_mw=5))
+    assert r.already_holds and not r.constraint_pathways and r.capacity_pathway is None
+
+
+def test_recommend_returns_verified_constraint_and_capacity_pathways():
+    from src.capacityos.recommend import recommend
+    r = recommend(SandboxRunRequest(season="summer", hour=14, dc_mw=20))
+    assert r.overload_mw > 0 and r.runs_tested > 1
+    assert r.capacity_pathway is not None and r.capacity_pathway.verified and r.capacity_pathway.needed_mw >= r.capacity_mw
+    for p in r.constraint_pathways:
+        assert p.changes and (p.remaining_mw <= 0.05) == p.holds
+
+
+def test_recommend_capacity_pathway_reruns_at_the_needed_limit_and_it_holds():
+    from src.capacityos.recommend import recommend
+    r = recommend(SandboxRunRequest(season="summer", hour=14, dc_mw=20))
+    cp = r.capacity_pathway
+    check = run_sandbox(SandboxRunRequest(season="summer", hour=14, dc_mw=20, capacity_mw=cp.needed_mw))
+    assert check.capacity_mw == cp.needed_mw
+
+
+def test_capacity_override_changes_the_result_and_is_labelled_user_assumption():
+    lo = run_sandbox(SandboxRunRequest(season="summer", hour=14, dc_mw=20, capacity_mw=70))
+    hi = run_sandbox(SandboxRunRequest(season="summer", hour=14, dc_mw=20, capacity_mw=130))
+    assert lo.overload_mw > hi.overload_mw
+    assert hi.provenance["capacity"] not in ("modeled", "modeled (assumed)")
+
+
+def test_recommend_route_returns_pathways():
+    from fastapi.testclient import TestClient
+    from src.main import app
+    r = TestClient(app).post("/api/sandbox/recommend", json={"season": "summer", "hour": 14, "dcMw": 20})
+    d = r.json()
+    assert r.status_code == 200 and d["overloadMw"] > 0 and d["capacityPathway"]["verified"]

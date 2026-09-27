@@ -101,12 +101,13 @@ def _norm_loads(req: SandboxRunRequest) -> tuple[tuple[str, float], ...]:
     return tuple(sorted((l.kind, round(float(l.size), 1)) for l in loads))
 
 
-@lru_cache(maxsize=32)
-def _overlay(loads: tuple[tuple[str, float], ...]):
+@lru_cache(maxsize=48)
+def _overlay(loads: tuple[tuple[str, float], ...], cap_override: Optional[float] = None):
     """Throwaway scenario: the dropped loads on the real baseline. Never stored; the world is untouched."""
     now = datetime.now(timezone.utc).isoformat()
     projects = [make_load(f"sbx-{i}", k, sz) for i, (k, sz) in enumerate(loads)]
-    sc = Scenario(id="sbx-" + "-".join(f"{k}{sz:g}" for k, sz in loads), zone_id=ZONE, name="Sandbox loads", created_at=now, seed=get_pack(ZONE).der_seed, projects=projects)
+    sc = Scenario(id="sbx-" + "-".join(f"{k}{sz:g}" for k, sz in loads) + (f"-cap{cap_override:g}" if cap_override else ""), zone_id=ZONE, name="Sandbox loads", created_at=now, seed=get_pack(ZONE).der_seed,
+                  projects=projects, assumption_overrides={"capacityMw": cap_override} if cap_override else {})
     df, cap, _, _ = scenario_frame(sc)
     windows = run_capacity_analysis(sc).windows
     return sc, df, cap, windows
@@ -176,7 +177,7 @@ _mem: dict[str, SandboxRunResponse] = {}
 
 
 def _cache_key(req: SandboxRunRequest, loads) -> str:
-    body = {"s": req.season, "h": req.hour, "l": [list(x) for x in loads], "p": req.provider, "i": req.incentive_per_mwh, "d": req.device_params.model_dump(mode="json")}
+    body = {"s": req.season, "h": req.hour, "l": [list(x) for x in loads], "p": req.provider, "i": req.incentive_per_mwh, "c": req.capacity_mw, "d": req.device_params.model_dump(mode="json")}
     return hashlib.blake2b(json.dumps(body, sort_keys=True).encode(), digest_size=10).hexdigest()
 
 
@@ -240,7 +241,7 @@ def run_sandbox(req: SandboxRunRequest, on_progress: Optional[Callable[[dict], N
 
 
 def _run_sandbox(req: SandboxRunRequest, loads, on_progress) -> SandboxRunResponse:
-    sc, df, cap, windows = _overlay(loads)
+    sc, df, cap, windows = _overlay(loads, req.capacity_mw)
     day = reference_day(req.season)
     target = day + pd.Timedelta(hours=req.hour)
     frame = df.set_index("timestamp")
@@ -249,7 +250,7 @@ def _run_sandbox(req: SandboxRunRequest, loads, on_progress) -> SandboxRunRespon
     before_load = float(frame.at[target, "net_mw"])
     common = dict(season=req.season, hour=req.hour, date_used=day.date().isoformat(), dc_mw=round(float(frame.at[target, "project_mw"]), 2), loads=[LoadSpec(kind=k, size=sz) for k, sz in loads], base_mw=round(base, 2), capacity_mw=cap,
                   params_applied=APPLIED_NOW, params_pending=PENDING,
-                  provenance={"demand": "derived", "devices": "modeled", "capacity": "modeled", "dataCentre": "hypothetical", "results": "derived"},
+                  provenance={"demand": "derived", "devices": "modeled", "capacity": "user_assumption" if req.capacity_mw else "modeled", "dataCentre": "hypothetical", "results": "derived"},
                   note="Simulation on the real demand shape with synthetic devices. Not a forecast, recommendation or engineering study.")
     curve = Curve(hours=list(range(24)), before=[round(float(v), 2) for v in day_rows["net_mw"]], after=[round(float(v), 2) for v in day_rows["net_mw"]])
 
@@ -290,39 +291,42 @@ def _run_sandbox(req: SandboxRunRequest, loads, on_progress) -> SandboxRunRespon
                               decision_source=run.decision_source, checks_passed=run.coordination.checks_passed, run_id=run.id, owner_log=owner_log(run), market=market_log(run), **common)
 
 
+def _season_cell(season: str, loads: list[LoadSpec], provider: str, inc: float, dp: DeviceParams, cap_override: Optional[float]) -> SeasonCell:
+    """One season's real reference day, judged over the WHOLE day. Real-LLM decisions are reused only when already cached; otherwise the deterministic policy runs."""
+    key = tuple(sorted((l.kind, round(float(l.size), 1)) for l in loads))
+    _, df, cap, _ = _overlay(key, cap_override)
+    frame = df.set_index("timestamp")
+    day = reference_day(season)
+    net = frame.loc[day: day + pd.Timedelta(hours=23), "net_mw"]
+    peak_hour = int(net.reset_index(drop=True).idxmax())
+    r = None
+    if provider == "openai":
+        sr = SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider="openai", incentive_per_mwh=inc, device_params=dp, capacity_mw=cap_override)
+        r = _cache_get(_cache_key(sr, _norm_loads(sr)))
+    r = r or run_sandbox(SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider="stub", incentive_per_mwh=inc, device_params=dp, capacity_mw=cap_override))
+    before, after = r.curve.before, r.curve.after
+    states = ["within" if b <= cap + 1e-6 else "absorbed" if a <= cap + 0.05 else "over" for b, a in zip(before, after)]
+    rank = {"within": 0, "absorbed": 1, "over": 2}
+    per = {name: max(states[a:b], key=lambda x: rank[x]) for name, (a, b) in {"morning": (6, 12), "afternoon": (12, 18), "evening": (18, 24)}.items()}
+    overload = round(max(0.0, max(before) - cap), 1)
+    remaining = round(max(0.0, max(after) - cap), 1) if overload > 0 else 0.0
+    absorbed = round(max(0.0, overload - remaining), 1)
+    outcome, text = _outcome(overload, absorbed, remaining)
+    return SeasonCell(season=season, date_used=r.date_used, peak_hour=peak_hour, outcome=outcome, outcome_text=text, peak_load_mw=round(max(before), 2), peak_load_after_mw=round(max(after), 2),
+                      overload_mw=overload, absorbed_mw=absorbed, remaining_mw=remaining, hours_over_before=sum(b > cap + 1e-6 for b in before),
+                      hours_over_after=sum(a > cap + 0.05 for a in after), hour_states=states, periods=per, decision_source=r.decision_source, owners_accepted=r.owners_accepted, owners_total=r.owners_total)
+
+
 def run_matrix(req: MatrixRequest) -> MatrixResponse:
     """The same constraint set against every season's real reference day (one run per season; each run covers the whole day, so every hour of it is answered)."""
     from concurrent.futures import ThreadPoolExecutor
 
     loads = req.loads or [LoadSpec(kind="data_centre", size=req.dc_mw)]
     key = tuple(sorted((l.kind, round(float(l.size), 1)) for l in loads))
-    _, df, cap, _ = _overlay(key)
-    frame = df.set_index("timestamp")
-
-    def one(season: str) -> SeasonCell:
-        day = reference_day(season)
-        net = frame.loc[day: day + pd.Timedelta(hours=23), "net_mw"]
-        peak_hour = int(net.reset_index(drop=True).idxmax())
-        r = None
-        if req.provider == "openai":                                             # the season test reuses real LLM decisions only when they are already cached; it never fans out 4x18 live calls
-            sr = SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider="openai", incentive_per_mwh=req.incentive_per_mwh, device_params=req.device_params)
-            r = _cache_get(_cache_key(sr, _norm_loads(sr)))
-        r = r or run_sandbox(SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider="stub", incentive_per_mwh=req.incentive_per_mwh, device_params=req.device_params))
-        before, after = r.curve.before, r.curve.after
-        states = ["within" if b <= cap + 1e-6 else "absorbed" if a <= cap + 0.05 else "over" for b, a in zip(before, after)]
-        rank = {"within": 0, "absorbed": 1, "over": 2}
-        per = {name: max(states[a:b], key=lambda x: rank[x]) for name, (a, b) in {"morning": (6, 12), "afternoon": (12, 18), "evening": (18, 24)}.items()}
-        overload = round(max(0.0, max(before) - cap), 1)                       # judged over the WHOLE day: the worst hour before and after
-        remaining = round(max(0.0, max(after) - cap), 1) if overload > 0 else 0.0
-        absorbed = round(max(0.0, overload - remaining), 1)
-        outcome, text = _outcome(overload, absorbed, remaining)
-        return SeasonCell(season=season, date_used=r.date_used, peak_hour=peak_hour, outcome=outcome, outcome_text=text, peak_load_mw=round(max(before), 2), peak_load_after_mw=round(max(after), 2),
-                          overload_mw=overload, absorbed_mw=absorbed, remaining_mw=remaining, hours_over_before=sum(b > cap + 1e-6 for b in before),
-                          hours_over_after=sum(a > cap + 0.05 for a in after), hour_states=states, periods=per, decision_source=r.decision_source, owners_accepted=r.owners_accepted, owners_total=r.owners_total)
-
+    _, _, cap, _ = _overlay(key, req.capacity_mw)
     order = ["winter", "spring", "summer", "fall"]
     with ThreadPoolExecutor(max_workers=4) as ex:
-        cells = list(ex.map(one, order))
+        cells = list(ex.map(lambda s: _season_cell(s, loads, req.provider, req.incentive_per_mwh, req.device_params, req.capacity_mw), order))
     return MatrixResponse(capacity_mw=cap, loads=[LoadSpec(kind=k, size=sz) for k, sz in key], cells=cells, params_applied=APPLIED_NOW,
                           provenance={"demand": "derived", "devices": "modeled", "capacity": "modeled", "results": "derived"},
                           note="Each cell is the real highest-demand day of that season (2021-2025) with your loads and device settings. A stress test on history, not a forecast.")

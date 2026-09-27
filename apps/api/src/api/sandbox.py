@@ -5,8 +5,9 @@ import threading
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ..capacityos.recommend import recommend
 from ..capacityos.sandbox import run_matrix, run_sandbox, world_info
-from ..schemas.sandbox import DeviceParams, MatrixRequest, MatrixResponse, SandboxRunRequest, SandboxRunResponse, SandboxWorld
+from ..schemas.sandbox import DeviceParams, MatrixRequest, MatrixResponse, RecommendResponse, SandboxRunRequest, SandboxRunResponse, SandboxWorld
 
 router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
 
@@ -64,3 +65,12 @@ def sandbox_run_stream(req: SandboxRunRequest):
             yield json.dumps(m) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@router.post("/recommend", response_model=RecommendResponse)
+def sandbox_recommend(req: SandboxRunRequest):
+    """What would it take? Verified constraint changes and the zone limit that would make this season's real day hold. Read-only."""
+    try:
+        return recommend(req)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
