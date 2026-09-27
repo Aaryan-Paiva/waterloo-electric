@@ -221,7 +221,7 @@ export function Sandbox() {
           {help && <HelpOverlay close={() => setHelp(false)} />}
 
           {/* brand + provenance */}
-          <Card t={t} x={24} y={24} w={352} h={104}>
+          <Card t={t} x={24} y={24} w={352} h={144}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 34, height: 34, borderRadius: 10, background: AMB, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill={AMB} stroke={INK} strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg></div>
               <div style={{ flexGrow: 1 }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, lineHeight: 1.1 }}>Waterloo Demo World</div><div style={{ fontSize: 12, color: t.mut }}>CapacityOS sandbox</div></div>
@@ -236,7 +236,7 @@ export function Sandbox() {
           </Card>
 
           {/* gauge */}
-          <Card t={t} x={24} y={144} w={352} h={150}>
+          <Card t={t} x={24} y={184} w={352} h={150}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: t.mut }}><span>{cap(season)} · {run ? run.dateUsed : world?.seasons[season].referenceDay ?? ""} · {hourLabel(shownHour)}</span><span>{devWorld ? devWorld.devices.battery + devWorld.devices.ev_fleet + devWorld.devices.building + devWorld.devices.solar : 0} device clusters</span></div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}><span style={{ fontFamily: FD, fontWeight: 700, fontSize: 46, lineHeight: 1, letterSpacing: -1, fontVariantNumeric: "tabular-nums" }}>{loadNow.toFixed(1)}</span><span style={{ fontSize: 14, color: t.mut }}>MW of {capacity} MW</span></div>
             <div style={{ position: "relative", height: 12, borderRadius: 6, background: t.sub, marginTop: 12 }}>
