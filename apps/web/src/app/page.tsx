@@ -36,7 +36,7 @@ const PROVENANCE: [string, string, string][] = [
 ];
 
 const PILOT: [string, string, string][] = [
-  ["Hackathon sandbox", "Today", "Public IESO demand data, a seeded synthetic DER population, an assumed zone capacity."],
+  ["Sandbox", "Today", "Public IESO demand data, a seeded synthetic DER population, an assumed zone capacity."],
   ["Calibrated utility pilot", "Next", "Swap in a utility's local constraints, real DER inventory, and the program rules actually being considered."],
   ["Operational deployment", "Then", "Hand the selected, stress-tested design to a real DERMS or utility program to enroll and run."],
 ];
