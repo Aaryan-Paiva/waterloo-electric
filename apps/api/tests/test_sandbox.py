@@ -85,3 +85,21 @@ def test_api():
     assert r["hasOverload"] and r["script"][0]["kind"] == "request" and r["outcome"] in ("holds", "partlyHolds", "partly_holds", "breaks")
     assert client.post("/api/sandbox/run", json={"season": "monsoon"}).status_code == 422
     assert client.post("/api/sandbox/run", json={"dcMw": -1}).status_code == 422
+
+
+def test_device_details_are_real_and_summary_matches_counts():
+    w = world_info()
+    assert set(w.device_details) == {"battery", "ev", "building", "solar"}
+    assert w.device_details["battery"].clusters == 20 and w.device_details["ev"].clusters == 14 and w.device_details["building"].clusters == 36
+    assert w.device_details["battery"].total_mw > 0 and w.device_details["battery"].total_mwh > w.device_details["battery"].total_mw
+    assert w.device_details["ev"].vehicles and w.device_details["solar"].owners == 0
+    assert sum(d.owners for d in w.device_details.values()) == w.owner_count
+
+
+def test_default_demo_scenario_is_pinned():
+    """The scenario the demo opens on: summer 2 pm, 20 MW data centre, default fleet (3x). A change here must be deliberate."""
+    r = run_sandbox(SandboxRunRequest(season="summer", hour=14, dc_mw=20))
+    assert r.date_used == "2025-06-24" and r.base_mw == pytest.approx(76.4, abs=0.1) and r.load_before_mw == pytest.approx(96.4, abs=0.1)
+    assert r.outcome == "holds" and r.remaining_mw == 0.0 and r.absorbed_mw == pytest.approx(6.4, abs=0.1)
+    assert r.dispatch_by_group["battery"] > 2 and r.dispatch_by_group["building"] > 1
+    assert r.checks_passed and r.decision_source == "deterministic_stub"

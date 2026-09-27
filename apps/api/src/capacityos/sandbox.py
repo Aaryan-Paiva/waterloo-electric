@@ -16,7 +16,7 @@ from ..owners.grouping import build_owners
 from ..owners.runner import run_agentic
 from ..projects.data_center import make_project
 from ..schemas.owners import AgenticRun, OwnerAgent
-from ..schemas.sandbox import (Curve, DeviceParams, SandboxRunRequest, SandboxRunResponse, SandboxWorld, ScriptStep, SeasonInfo)
+from ..schemas.sandbox import (Curve, DeviceParams, DeviceTypeInfo, SandboxRunRequest, SandboxRunResponse, SandboxWorld, ScriptStep, SeasonInfo)
 from ..schemas.scenario import Scenario
 from ..simulation.stress_test import run_capacity_analysis, scenario_frame
 from ..world.population import build_population, use_variant
@@ -52,12 +52,28 @@ def seasons_info() -> dict[str, SeasonInfo]:
     return out
 
 
+def _details(pop, owners) -> dict[str, DeviceTypeInfo]:
+    of = lambda ot: sum(1 for o in owners if o.owner_type == ot)
+    by = lambda t: [a for a in pop.agents if a.type == t]
+    b, e, bl, so = by("battery"), by("ev_fleet"), by("building"), by("solar")
+    return {
+        "battery": DeviceTypeInfo(label="Batteries", clusters=len(b), total_mw=round(sum(a.power_mw for a in b), 1), total_mwh=round(sum(a.energy_mwh for a in b), 1), owners=of("battery_operator"),
+                                  does="Discharge at the peak and charge off-peak, on top of their normal routine.", limits="Charge level, a reserve kept back, inverter power, round-trip losses."),
+        "ev": DeviceTypeInfo(label="EV charging fleets", clusters=len(e), total_mw=round(sum(a.max_charging_mw for a in e), 1), vehicles=sum(a.vehicles for a in e), owners=of("ev_aggregator"),
+                             does="Delay charging to later, then catch up before departure.", limits="Vehicles must be charged by their departure time; a shiftable share and charger power cap."),
+        "building": DeviceTypeInfo(label="Buildings and homes", clusters=len(bl), total_mw=round(sum(a.peak_mw for a in bl), 1), owners=of("building_portfolio"),
+                                   does="Trim heating and cooling for a few hours, then rebound.", limits="Comfort budget, longest curtailment, rebound load afterwards."),
+        "solar": DeviceTypeInfo(label="Solar", clusters=len(so), total_mw=round(sum(a.installed_mw for a in so), 1), owners=0,
+                                does="Generates only. Already part of the baseline demand, so it never dispatches.", limits="Sun and weather."),
+    }
+
+
 def world_info() -> SandboxWorld:
     pack, pop, owners = get_pack(ZONE), build_population(ZONE), build_owners(ZONE)
     dev = {t: sum(1 for a in pop.agents if a.type == t) for t in ("battery", "ev_fleet", "building", "solar")}
     return SandboxWorld(zone_id=ZONE, zone_name=pack.name, capacity_mw=pack.capacity.value_mw,
                         provenance={"demand": "derived (real IESO shape, scaled)", "devices": "modeled (synthetic)", "capacity": "modeled (assumed)", "dataCentre": "hypothetical"},
-                        devices=dev, owner_count=len(owners), seasons=seasons_info(), defaults=DeviceParams(),
+                        devices=dev, device_details=_details(pop, owners), owner_count=len(owners), seasons=seasons_info(), defaults=DeviceParams(),
                         note="A planning sandbox on real demand shape with synthetic devices. Not a forecast or an engineering study.")
 
 
@@ -165,9 +181,9 @@ def run_sandbox(req: SandboxRunRequest) -> SandboxRunResponse:
     except CoordinationError as e:
         raise ValueError(str(e))
     script, by, pre, post = build_script(run, target.isoformat(), req.incentive_per_mwh)
-    overload = max(0.0, pre - cap)
-    remaining = max(0.0, post - cap)
-    absorbed = max(0.0, overload - remaining)
+    overload = round(max(0.0, pre - cap), 1)                 # one decimal everywhere, so the numbers on screen add up
+    remaining = round(max(0.0, post - cap), 1)
+    absorbed = round(max(0.0, overload - remaining), 1)
     outcome, text = _outcome(overload, absorbed, remaining)
     opt = {pd.Timestamp(h.timestamp): h.optimized_net_mw for h in run.coordination.hourly}
     after = [round(opt.get(t, float(v)), 2) for t, v in zip(day_rows.index, day_rows["net_mw"])]

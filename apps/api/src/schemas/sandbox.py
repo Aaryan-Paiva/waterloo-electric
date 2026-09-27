@@ -40,12 +40,24 @@ class SeasonInfo(CamelModel):
     peak_mw: float
 
 
+class DeviceTypeInfo(CamelModel):
+    label: str
+    clusters: int
+    total_mw: float                  # at fleet size 1x: power (batteries), charger capacity (EV), controllable peak load (buildings), installed (solar)
+    total_mwh: Optional[float] = None
+    vehicles: Optional[int] = None
+    owners: int
+    does: str
+    limits: str
+
+
 class SandboxWorld(CamelModel):
     zone_id: str
     zone_name: str
     capacity_mw: float
     provenance: dict[str, str]
     devices: dict[str, int]
+    device_details: dict[str, DeviceTypeInfo]
     owner_count: int
     seasons: dict[str, SeasonInfo]
     defaults: DeviceParams

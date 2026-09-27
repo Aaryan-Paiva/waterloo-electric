@@ -13,14 +13,21 @@ export interface SandboxRun {
   curve: { hours: number[]; before: number[]; after: number[] }; ownersTotal: number; ownersAccepted: number; eventEnergyBeforeMwh: number; eventEnergyAfterMwh: number;
   decisionSource: string; checksPassed: boolean; paramsApplied: string[]; paramsPending: string[]; runId?: string | null; provenance: Record<string, string>; note: string;
 }
+export interface DeviceTypeInfo { label: string; clusters: number; totalMw: number; totalMwh?: number | null; vehicles?: number | null; owners: number; does: string; limits: string }
 export interface SandboxWorldInfo {
-  zoneId: string; zoneName: string; capacityMw: number; provenance: Record<string, string>; devices: Record<string, number>; ownerCount: number;
+  zoneId: string; zoneName: string; capacityMw: number; provenance: Record<string, string>; devices: Record<string, number>; deviceDetails: Record<"battery" | "ev" | "building" | "solar", DeviceTypeInfo>; ownerCount: number;
   seasons: Record<Season, { referenceDay: string; hourlyBaselineMw: number[]; peakMw: number }>; defaults: DeviceParams; note: string;
 }
 export async function fetchSandboxWorld(): Promise<SandboxWorldInfo> {
   const r = await fetch(`${API_URL}/api/sandbox/world`, { cache: "no-store" }); if (!r.ok) throw new Error(`world ${r.status}`); return r.json();
 }
 export async function postSandboxRun(body: { season: Season; hour: number; dcMw: number; provider: "stub" | "openai"; incentivePerMwh: number; deviceParams: DeviceParams }): Promise<SandboxRun> {
-  const r = await fetch(`${API_URL}/api/sandbox/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
-  if (!r.ok) throw new Error(`run ${r.status}`); return r.json();
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 30000);
+  try {
+    const r = await fetch(`${API_URL}/api/sandbox/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: ctl.signal });
+    if (!r.ok) throw new Error(`The simulation returned an error (${r.status}).`);
+    return await r.json();
+  } catch (e) {
+    throw new Error(e instanceof DOMException && e.name === "AbortError" ? "The simulation took too long (over 30 s)." : e instanceof Error ? e.message : "Could not reach the simulation.");
+  } finally { clearTimeout(timer); }
 }

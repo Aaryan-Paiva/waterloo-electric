@@ -2,7 +2,7 @@
 
 ## Current Status
 - **Product now:** Waterloo Electric, a live isometric flexible-grid sandbox (see `PLAN.md`). The engine (Phases 0-7) underneath is unchanged and still tested.
-- **Current stage: Stage 6 (polish) — IN PROGRESS.** Stages 0-5 done. Next: Stage 7 freeze and submit.
+- **Current stage: Stage 6 (polish) — DONE. Stage 7 (freeze and submit) — IN PROGRESS** (README rewritten; final checks and public repo pending).
 - Last verified: backend **156 passed** (pytest), web lint + `tsc` clean, browser-verified drop -> strain -> narrated rebalance -> result.
 - Known limitations: fleet size default 3x is an assumption; data-centre flexible compute not modeled; device inspector not built; not yet checked at projector size; nothing committed since the scaffold; OpenAI owners untested live beyond the earlier partial run.
 
@@ -14,9 +14,9 @@
 | 2 | Device parameters + fleet size | DONE in reduced form (78 physical models kept; sizes scaled by `fleetSizeX`; behavior overrides). More clusters and data-centre flexibility deferred |
 | 3 | Isometric world renderer | DONE (all seasons, night, states) |
 | 4 | Drag-and-drop, script player, result | DONE, browser-verified |
-| 5 | Device editor drawer | FIRST VERSION DONE; inspector and "what changed" delta not built |
-| 6 | Narration + polish | PARTIAL (browser speech toggle exists; states/a11y/projector check pending) |
-| 7 | Freeze, docs, submit | NOT STARTED |
+| 5 | Device editor drawer | DONE (+ device inspector, "what changed" line) |
+| 6 | Narration + polish | DONE (error/loading states, retry, 30 s request timeout, inspector, change note, projector-size check at 1280x720, pinned default scenario) |
+| 7 | Freeze, docs, submit | IN PROGRESS |
 
 ## Progress Log
 
@@ -101,3 +101,9 @@ Findings:
 - Winter at 20 MW has no overload (only summer/fall in the golden data); a 45 MW data centre creates winter stress.
 Verification: backend 156 passed; web lint/tsc clean; browser: drag onto a lot -> strain -> 64-step script -> result card.
 Next: see the plan in the reply; then Stage 5/6 gaps, docs, commit.
+
+### 2026-09-27 ~04:40 — Stage 6 (polish) DONE
+What changed: backend `deviceDetails` in `/api/sandbox/world` (real per-type totals: clusters, MW, MWh, vehicles, owners, what it does, limits); numbers rounded once so overload, absorbed and remaining add up on screen. Web: `lib/sandboxLogic.ts` (phase, gauge, night, change note as pure tested functions), device Inspector (legend row or click a cluster), "what changed" line after an edit, 30 s request timeout with a plain error and "Try again", loading overlay, API-down screen with retry, bubble text fixed.
+Tests: backend +2 (device details, pinned default demo scenario summer 2 pm 20 MW: base 76.4, before 96.4, holds, absorbed 6.4), web +5 (15 total).
+Verification: sandbox tests 10 passed, web 15 passed, lint and tsc clean, production build clean; browser: inspector opens, reserve 25% -> 60% changes the result and prints "Absorbs 0.3 MW less than the previous run", layout fits 1280x720 with no clipping, API-down screen shown when the API is stopped.
+Next: Stage 7: full backend suite, README (rewritten for the new product), clean-clone check, make the repo public (needs your confirmation), submit.
