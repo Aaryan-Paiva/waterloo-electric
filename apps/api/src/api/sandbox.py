@@ -1,4 +1,9 @@
+import json
+import queue
+import threading
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from ..capacityos.sandbox import run_matrix, run_sandbox, world_info
 from ..schemas.sandbox import DeviceParams, MatrixRequest, MatrixResponse, SandboxRunRequest, SandboxRunResponse, SandboxWorld
@@ -33,3 +38,29 @@ def sandbox_matrix(req: MatrixRequest):
         return run_matrix(req)
     except ValueError as e:
         raise HTTPException(422, str(e))
+
+
+@router.post("/run-stream")
+def sandbox_run_stream(req: SandboxRunRequest):
+    """Same run, streamed as NDJSON: one `progress` line per owner as its decision returns, then one `result` line (or `error`)."""
+    q: "queue.Queue[dict]" = queue.Queue()
+
+    def work():
+        try:
+            q.put({"type": "result", "data": json.loads(run_sandbox(req, on_progress=q.put).model_dump_json(by_alias=True))})
+        except ValueError as e:
+            q.put({"type": "error", "message": str(e)})
+        except Exception as e:                                                             # noqa: BLE001
+            q.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
+        q.put({"type": "end"})
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def gen():
+        while True:
+            m = q.get()
+            if m["type"] == "end":
+                return
+            yield json.dumps(m) + "\n"
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")

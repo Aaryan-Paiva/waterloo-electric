@@ -197,3 +197,33 @@ def test_matrix_api():
     r = client.post("/api/sandbox/matrix", json={"loads": [{"kind": "data_centre", "size": 20}, {"kind": "housing", "size": 1000}]}).json()
     assert len(r["cells"]) == 4 and r["capacityMw"] == 90 and r["cells"][0]["season"] == "winter" and r["cells"][2]["hourStates"]
     assert client.post("/api/sandbox/matrix", json={"dcMw": -5}).status_code == 422
+
+
+# ---- Stage C: decision cache, asset log, streaming ----------------------------------------------------------------------------
+def test_run_has_owner_log_and_market():
+    r = run_sandbox(SandboxRunRequest(season="summer", hour=14, dc_mw=20))
+    assert r.owner_log and len(r.owner_log) == r.owners_total
+    assert r.market and r.market.owners_accepted == r.owners_accepted
+    assert all(o.source == "stub" for o in r.owner_log)
+    assert abs(sum(o.dispatched_mwh for o in r.owner_log) - r.market.dispatched_mwh) < 0.05
+
+
+def test_repeat_run_is_served_from_cache_with_same_numbers():
+    q = SandboxRunRequest(season="summer", hour=15, dc_mw=25)
+    a, b = run_sandbox(q), run_sandbox(q)
+    assert b.cached and not a.cached or a.cached                   # the second call is always a cache hit
+    assert b.cached
+    assert (a.absorbed_mw, a.remaining_mw, a.decision_source) == (b.absorbed_mw, b.remaining_mw, b.decision_source)
+
+
+def test_run_stream_endpoint_returns_result_line():
+    import json
+    from fastapi.testclient import TestClient
+    from src.main import app
+    r = TestClient(app).post("/api/sandbox/run-stream", json={"season": "summer", "hour": 14, "dcMw": 20})
+    msgs = [json.loads(x) for x in r.text.splitlines() if x.strip()]
+    assert msgs[-1]["type"] == "result" and msgs[-1]["data"]["ownerLog"]
+
+
+def test_world_reports_llm_availability_flag():
+    assert isinstance(world_info().llm_available, bool)

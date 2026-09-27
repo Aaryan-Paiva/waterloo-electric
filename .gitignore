@@ -19,3 +19,4 @@ data/processed/legacy/
 
 .claude/
 apps/api/.env
+.cache/

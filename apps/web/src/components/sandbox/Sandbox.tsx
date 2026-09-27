@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IsoWorld } from "@/components/iso/IsoWorld";
 import { ANCHORS, H, W, lotAt, type Phase, type Season } from "@/components/iso/scene";
-import { fetchSandboxWorld, fetchWorldFor, postMatrix, postSandboxRun, type CellState, type DeviceParams, type Matrix, type SeasonCell, type Group, type LoadKind, type SandboxRun, type SandboxWorldInfo, type ScriptStep } from "@/lib/sandbox";
+import { fetchSandboxWorld, fetchWorldFor, postMatrix, postSandboxRunStream, type OwnerProgress, type CellState, type DeviceParams, type Matrix, type SeasonCell, type Group, type LoadKind, type SandboxRun, type SandboxWorldInfo, type ScriptStep } from "@/lib/sandbox";
 import { changeNote, derivePhase, gaugeLoad, hourLabel, nightOf } from "@/lib/sandboxLogic";
 
 const INK = "#1D2320", PAPER = "#FBF7EE", LINE = "#D9D1BE", AMB = "#F2A72E", TEAL = "#1F9E89", CORAL = "#E5533D", BLUE = "#3F86D8", VIO = "#8C7AE0";
@@ -19,6 +19,7 @@ const LOAD_META: Record<LoadKind, { label: string; unit: string; def: number; mi
 };
 const SEASONS: Season[] = ["winter", "spring", "summer", "fall"];
 const DEFAULTS: DeviceParams = { fleetSizeX: 1, batteryCount: 60, evFleetCount: 42, buildingCount: 108, solarCount: 24, batteryReservePct: 25, ownersEnrolledPct: 100, minPriceScale: 1, evShiftablePct: 60, evMaxDelayH: 4, buildingOffsetC: 2, buildingMaxHours: 3, reboundPct: 70, dcFlexPct: 0, dcMaxDeferH: 3 };
+const SOURCE_LABEL: Record<string, string> = { llm_openai: "real LLM agents (OpenAI)", mixed_llm_and_stub: "real LLM agents, some on backup policy", deterministic_stub: "deterministic policy", none: "none needed" };
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 function theme(dark: boolean) { return { bg: dark ? "rgba(22,28,40,.92)" : "rgba(251,247,238,.95)", fg: dark ? "#F4EFE2" : INK, mut: dark ? "#A9B3C4" : "#6A6F66", ln: dark ? "#33405A" : LINE, sub: dark ? "rgba(255,255,255,.08)" : "rgba(29,35,32,.07)", dark }; }
@@ -37,7 +38,11 @@ export function Sandbox() {
   const [loads, setLoads] = useState<Load[]>([]);
   const [dragKind, setDragKind] = useState<LoadKind>("data_centre");
   const [trayOpen, setTrayOpen] = useState(false);
-  const [tab, setTab] = useState<"result" | "seasons" | "history">("result");
+  const [tab, setTab] = useState<TabKey>("result");
+  const [live, setLive] = useState<OwnerProgress[]>([]);
+  const [clock, setClock] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const clockRef = useRef<number | null>(null);
   const [matrix, setMatrix] = useState<{ key: string; data: Matrix } | null>(null);
   const [matrixBusy, setMatrixBusy] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -45,7 +50,7 @@ export function Sandbox() {
   const [devWorld, setDevWorld] = useState<SandboxWorldInfo | null>(null);
   const nextId = useRef(1);
   const [params, setParams] = useState<DeviceParams>(DEFAULTS);
-  const [provider, setProvider] = useState<"stub" | "openai">("stub");
+  const [provider, setProvider] = useState<"stub" | "openai">("openai");
   const [run, setRun] = useState<SandboxRun | null>(null);
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState(0);
@@ -64,7 +69,12 @@ export function Sandbox() {
   const lastDone = useRef<{ absorbed: number; remaining: number } | null>(null);
   useEffect(() => { runRef.current = run; }, [run]);
 
-  useEffect(() => { fetchSandboxWorld().then(setWorld).catch((e) => setErr(String(e))); }, []);
+  useEffect(() => { fetchSandboxWorld().then((w) => { setWorld(w); if (!w.llmAvailable) setProvider("stub"); }).catch((e) => setErr(String(e))); }, []);
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => { const n = (clockRef.current ?? -1) + 1; if (n > 23) { clockRef.current = null; setClock(null); setPlaying(false); } else { clockRef.current = n; setClock(n); } }, 800);
+    return () => clearInterval(id);
+  }, [playing]);
   useEffect(() => {
     const el = wrap.current; if (!el) return;
     const ro = new ResizeObserver(() => setScale(Math.min(el.clientWidth / W, (window.innerHeight - 24) / H)));
@@ -76,8 +86,8 @@ export function Sandbox() {
     if (loads.length === 0 || !world) return;
     const id = ++reqId.current;
     const h = setTimeout(() => {
-      setBusy(true); setRun(null); setProg(0);
-      postSandboxRun({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), provider, incentivePerMwh: 100, deviceParams: params })
+      setBusy(true); setRun(null); setProg(0); setLive([]);
+      postSandboxRunStream({ season, hour, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), provider, incentivePerMwh: 100, deviceParams: params }, (p) => { if (id === reqId.current) setLive((l) => [...l, p]); })
         .then((r) => { if (id === reqId.current) { const o = lastDone.current; setPrev(o); setRun(r); setProg(0); setErr(null); setTab("result");
           setHistory((h) => [...h, { n: ++histN.current, loads: loads.map((l) => ({ kind: l.kind, size: l.size, lot: l.lot })), params, provider, season, hour, outcome: r.outcome, overloadMw: r.overloadMw, absorbedMw: r.absorbedMw, remainingMw: r.remainingMw, source: r.decisionSource }]); } })
         .catch((e) => id === reqId.current && setErr(String(e)))
@@ -128,14 +138,18 @@ export function Sandbox() {
   const capacity = world?.capacityMw ?? 90;
   const cleared = visible.some((s) => s.kind === "clearing");
   const lastDispatch = [...visible].reverse().find((s) => s.kind === "dispatch");
-  const loadNow = gaugeLoad({ run, placed: loads.length > 0, finished, lastDispatchLoad: lastDispatch?.loadAfterMw, base, dcMw: loads.filter((l) => l.kind === "data_centre").reduce((a, l) => a + l.size, 0) });
-  const phase: Phase = derivePhase({ run, placed: loads.length > 0, finished, cleared, capacity });
+  const loadStatic = gaugeLoad({ run, placed: loads.length > 0, finished, lastDispatchLoad: lastDispatch?.loadAfterMw, base, dcMw: loads.filter((l) => l.kind === "data_centre").reduce((a, l) => a + l.size, 0) });
+  const clockLoad = clock === null ? null : run && run.curve.after[clock] !== undefined ? run.curve.after[clock] : (world?.seasons[season].hourlyBaselineMw[clock] ?? base);
+  const loadNow = clockLoad ?? loadStatic;
+  const clockPhase: Phase | null = clock === null ? null : run && run.curve.before[clock] > capacity ? (run.curve.after[clock] > capacity + 0.05 ? "stress" : "balanced") : "calm";
+  const phase: Phase = clockPhase ?? derivePhase({ run, placed: loads.length > 0, finished, cleared, capacity });
   const active = useMemo(() => {
     const a = { battery: false, ev: false, building: false };
     if (run && !finished) visible.forEach((s) => { if (s.kind === "dispatch" && s.group && (s.mw ?? 0) > 0.005) a[s.group] = true; });
     return a;
   }, [run, finished, visible]);
-  const night = nightOf(hour), t = theme(night > 0.5);
+  const shownHour = clock ?? hour;
+  const night = nightOf(shownHour), t = theme(night > 0.5);
 
   // drag and drop from the tray
   const toStage = useCallback((cx: number, cy: number) => { const r = stage.current!.getBoundingClientRect(); return { x: (cx - r.left) / scale, y: (cy - r.top) / scale }; }, [scale]);
@@ -161,7 +175,7 @@ export function Sandbox() {
     </main>
   );
 
-  const caption = !world ? "Loading the world…" : busy ? "Asking the flexible devices for help…" : last ? last.text : loads.length > 0 ? "Loads added. Checking the grid…" : `${(devWorld ?? world).devices.battery + (devWorld ?? world).devices.ev_fleet + (devWorld ?? world).devices.building + (devWorld ?? world).devices.solar} device clusters are following their routines. Drag a new load onto an empty lot.`;
+  const caption = clock !== null && world ? `Playing the real ${season} day: ${hourLabel(clock)}, ${loadNow.toFixed(1)} MW${run && run.curve.before[clock] > capacity ? (run.curve.after[clock] > capacity + 0.05 ? " — still over capacity" : " — overload absorbed by the flexible devices") : ""}.` : !world ? "Loading the world…" : busy ? "Asking the flexible devices for help…" : last ? last.text : loads.length > 0 ? "Loads added. Checking the grid…" : `${(devWorld ?? world).devices.battery + (devWorld ?? world).devices.ev_fleet + (devWorld ?? world).devices.building + (devWorld ?? world).devices.solar} device clusters are following their routines. Drag a new load onto an empty lot.`;
   const over = loadNow > capacity + 0.05;
 
   return (
@@ -184,7 +198,7 @@ export function Sandbox() {
 
           {/* gauge */}
           <Card t={t} x={24} y={144} w={352} h={150}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: t.mut }}><span>{cap(season)} · {run ? run.dateUsed : world?.seasons[season].referenceDay ?? ""} · {hourLabel(hour)}</span><span>{devWorld ? devWorld.devices.battery + devWorld.devices.ev_fleet + devWorld.devices.building + devWorld.devices.solar : 0} device clusters</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: t.mut }}><span>{cap(season)} · {run ? run.dateUsed : world?.seasons[season].referenceDay ?? ""} · {hourLabel(shownHour)}</span><span>{devWorld ? devWorld.devices.battery + devWorld.devices.ev_fleet + devWorld.devices.building + devWorld.devices.solar : 0} device clusters</span></div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}><span style={{ fontFamily: FD, fontWeight: 700, fontSize: 46, lineHeight: 1, letterSpacing: -1, fontVariantNumeric: "tabular-nums" }}>{loadNow.toFixed(1)}</span><span style={{ fontSize: 14, color: t.mut }}>MW of {capacity} MW</span></div>
             <div style={{ position: "relative", height: 12, borderRadius: 6, background: t.sub, marginTop: 12 }}>
               <div style={{ position: "absolute", left: 0, top: 0, height: 12, width: `${Math.min(100, (loadNow / 120) * 100)}%`, borderRadius: 6, background: over ? CORAL : loadNow > capacity * 0.85 ? AMB : TEAL, transition: "width .5s" }} />
@@ -198,12 +212,13 @@ export function Sandbox() {
           {/* right column: tray -> steps -> result; drawer on top */}
           {inspect && !drawer && <Inspector t={t} world={world} which={inspect} run={run} fleet={params.fleetSizeX} close={() => setInspect(null)} />}
           {!inspect && !drawer && (trayOpen || (!run && !busy)) && <Tray t={t} world={devWorld ?? world} loads={loads} setLoads={setLoads} onInspect={setInspect} onStart={(e, k) => { setDragKind(k); setDrag(toStage(e.clientX, e.clientY)); }} onKey={(k) => setLoads((cur) => { const free = [0, 1, 2, 3].find((i) => !cur.some((x) => x.lot === i)); return free === undefined ? cur : [...cur, { id: `l${nextId.current++}`, kind: k, size: LOAD_META[k].def, lot: free }]; })} onEdit={() => setDrawer(true)} reset={reset} />}
-          {!inspect && !trayOpen && (busy || (run && !finished)) && !drawer && <Steps t={t} run={run} visible={visible} busy={busy} skip={() => setProg(steps.length)} />}
+          {!inspect && !trayOpen && (busy || (run && !finished)) && !drawer && <Steps t={t} run={run} visible={visible} busy={busy} live={live} skip={() => setProg(steps.length)} />}
           {!inspect && !trayOpen && !drawer && run && (finished || tab !== "result") && <Tabs t={t} tab={tab} setTab={setTab} count={history.length} />}
           {!inspect && !trayOpen && !drawer && tab === "seasons" && run && (finished || true) && <Seasons t={t} matrix={matrix && matrix.key === cfgKey ? matrix.data : null} busy={matrixBusy} capacity={capacity} onPick={(c) => { setSeason(c.season); setHour(c.peakHour); setTab("result"); }} />}
+          {!inspect && !trayOpen && !drawer && tab === "log" && run && <LogPane t={t} run={run} />}
           {!inspect && !trayOpen && !drawer && tab === "history" && <History t={t} history={history} onRestore={(h) => { setLoads(h.loads.map((l) => ({ id: `l${nextId.current++}`, kind: l.kind, size: l.size, lot: l.lot }))); setParams(h.params); setProvider(h.provider); setSeason(h.season); setHour(h.hour); setTab("result"); }} />}
           {!inspect && !trayOpen && !drawer && tab === "result" && run && finished && <Result t={t} run={run} note={changeNote(prev, run)} onLoads={() => setTrayOpen(true)} onEdit={() => setDrawer(true)} onSeason={(s) => { setSeason(s); setHour(s === "winter" ? 18 : 14); }} reset={reset} />}
-          {drawer && <Drawer t={t} params={params} setP={setP} provider={provider} setProvider={setProvider} world={devWorld ?? world} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
+          {drawer && <Drawer t={t} llm={world?.llmAvailable ?? false} params={params} setP={setP} provider={provider} setProvider={setProvider} world={devWorld ?? world} close={() => setDrawer(false)} defaults={world?.defaults ?? DEFAULTS} />}
 
           {/* owner speech bubbles anchored to the real device groups */}
           {run && !finished && (["battery", "ev", "building"] as Group[]).map((g, gi) => {
@@ -232,12 +247,12 @@ export function Sandbox() {
               </div>
               <div style={{ width: 520 }}>
                 <div style={{ display: "flex", gap: 6 }} role="group" aria-label="Season">
-                  {SEASONS.map((s) => <button key={s} onClick={() => setSeason(s)} aria-pressed={s === season} style={{ height: 30, padding: "0 12px", borderRadius: 15, fontSize: 13, fontWeight: 600, cursor: "pointer", background: s === season ? t.fg : "transparent", color: s === season ? (t.dark ? INK : PAPER) : t.fg, border: `1px solid ${s === season ? "transparent" : t.ln}` }}>{cap(s)}</button>)}
-                  <span style={{ marginLeft: "auto", fontSize: 12, color: t.mut, alignSelf: "center" }}>{hourLabel(hour)}</span>
+                  {SEASONS.map((s) => <button key={s} onClick={() => { setSeason(s); setPlaying(false); clockRef.current = null; setClock(null); }} aria-pressed={s === season} style={{ height: 30, padding: "0 12px", borderRadius: 15, fontSize: 13, fontWeight: 600, cursor: "pointer", background: s === season ? t.fg : "transparent", color: s === season ? (t.dark ? INK : PAPER) : t.fg, border: `1px solid ${s === season ? "transparent" : t.ln}` }}>{cap(s)}</button>)}
+                  <button onClick={() => { if (playing) setPlaying(false); else { if (clockRef.current === null) { clockRef.current = -1; } setPlaying(true); } }} aria-label={playing ? "Pause the day" : "Play the day"} style={{ marginLeft: "auto", height: 30, padding: "0 12px", borderRadius: 15, fontSize: 13, fontWeight: 600, cursor: "pointer", background: playing ? AMB : "transparent", color: playing ? INK : t.fg, border: `1px solid ${playing ? "transparent" : t.ln}` }}>{playing ? "❚❚ Pause" : clock !== null ? "▶ Resume" : "▶ Play the day"}</button>{clock !== null && <button onClick={() => { setPlaying(false); clockRef.current = null; setClock(null); }} aria-label="Stop the clock" style={{ height: 30, padding: "0 10px", borderRadius: 15, fontSize: 13, cursor: "pointer", background: "transparent", color: t.fg, border: `1px solid ${t.ln}` }}>Stop</button>}<span style={{ fontSize: 12, color: t.mut, alignSelf: "center", minWidth: 42, textAlign: "right" }}>{hourLabel(shownHour)}</span>
                 </div>
                 <div style={{ position: "relative", height: 26, marginTop: 6 }}>
                   <div style={{ position: "absolute", left: 0, right: 0, top: 10, height: 6, borderRadius: 3, background: "linear-gradient(90deg,#26305E 0%,#26305E 22%,#F7C97B 30%,#BFE3F5 45%,#BFE3F5 70%,#F2A25A 80%,#26305E 90%,#26305E 100%)" }} />
-                  <input type="range" min={0} max={23} value={hour} onChange={(e) => setHour(+e.target.value)} aria-label="Hour of day" style={{ position: "absolute", left: 0, top: 3, width: "100%", accentColor: AMB, background: "transparent" }} />
+                  <input type="range" min={0} max={23} value={shownHour} onChange={(e) => { setPlaying(false); clockRef.current = null; setClock(null); setHour(+e.target.value); }} aria-label="Hour of day" style={{ position: "absolute", left: 0, top: 3, width: "100%", accentColor: AMB, background: "transparent" }} />
                 </div>
               </div>
             </div>
@@ -288,7 +303,7 @@ function Tray({ t, world, loads, setLoads, onStart, onKey, onEdit, reset, onInsp
   );
 }
 
-function Steps({ t, run, visible, busy, skip }: { t: T; run: SandboxRun | null; visible: ScriptStep[]; busy: boolean; skip: () => void }) {
+function Steps({ t, run, visible, busy, live, skip }: { t: T; run: SandboxRun | null; visible: ScriptStep[]; busy: boolean; live: OwnerProgress[]; skip: () => void }) {
   const disp = (run?.script ?? []).filter((s) => s.kind === "dispatch");
   const shown = new Set(visible.filter((s) => s.kind === "dispatch").map((s) => s.i));
   const nextI = disp.find((s) => !shown.has(s.i))?.i;
@@ -298,6 +313,11 @@ function Steps({ t, run, visible, busy, skip }: { t: T; run: SandboxRun | null; 
     <Card t={t} x={1096} y={24} w={320} h={420}>
       <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>{busy ? "Asking the devices…" : "The grid is rebalancing"}</div>
       <div style={{ fontSize: 12, color: t.mut, margin: "2px 0 10px" }}>Owners offer, a physics check validates, the optimizer decides</div>
+      {busy && <div aria-live="polite">
+        <div style={{ fontSize: 13, marginBottom: 6 }}>{live.length === 0 ? "Sending the request to the owners…" : `${live.length} of ${live[0].total} owners have decided`}</div>
+        <div style={{ height: 8, borderRadius: 4, background: t.sub, overflow: "hidden" }}><div style={{ height: 8, width: `${live.length ? (live.length / live[0].total) * 100 : 4}%`, background: TEAL, transition: "width .3s" }} /></div>
+        <div style={{ marginTop: 10, maxHeight: 250, overflow: "hidden" }}>{[...live].reverse().slice(0, 8).map((p) => <div key={p.ownerId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "4px 0", borderTop: `1px solid ${t.ln}` }}><Dot c={p.status === "declined" ? "#9AA0A6" : p.status === "fallback" ? AMB : TEAL} /><span style={{ flexGrow: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.ownerName}</span><span style={{ color: t.mut }}>{p.status === "offered" ? "offered" : p.status === "declined" ? "declined" : "backup"}</span></div>)}</div>
+      </div>}
       {disp.map((s) => { const done = shown.has(s.i), now = s.i === nextI && visible.some((v) => v.kind === "clearing"); const c = s.group ? GROUP_COLOR[s.group] : INK;
         return <div key={s.i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderTop: `1px solid ${t.ln}`, opacity: done || now ? 1 : 0.5 }}>
           <span style={{ width: 22, height: 22, borderRadius: "50%", boxSizing: "border-box", background: done ? TEAL : "transparent", border: done ? "none" : `${now ? 3 : 2}px solid ${now ? AMB : t.ln}`, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12 }}>{done ? "✓" : ""}</span>
@@ -341,7 +361,7 @@ function Result({ t, run, note, onEdit, onLoads, onSeason, reset }: { onLoads: (
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
         {([["Edit loads", onLoads, true], ["Edit the devices", onEdit, false], [run.season === "winter" ? "Try summer" : "Try winter", () => onSeason(run.season === "winter" ? "summer" : "winter"), false], ["Reset", reset, false]] as const).map(([l, f, p]) => <button key={l} onClick={f} style={{ height: 38, padding: "0 14px", borderRadius: 19, fontSize: 13, fontWeight: 600, cursor: "pointer", background: p ? t.fg : "transparent", color: p ? (t.dark ? INK : PAPER) : t.fg, border: `1px solid ${p ? t.fg : t.ln}` }}>{l}</button>)}
       </div>
-      <div style={{ fontSize: 11, color: t.mut, marginTop: 10, lineHeight: 1.4 }}>Owner decisions: {run.decisionSource.replace(/_/g, " ")} · physical checks {run.checksPassed ? "passed" : "FAILED"}. Simulation on the real demand shape with synthetic devices. Not a forecast or an engineering study.</div>
+      <div style={{ fontSize: 11, color: t.mut, marginTop: 10, lineHeight: 1.4 }}>Owner decisions: {SOURCE_LABEL[run.decisionSource] ?? run.decisionSource.replace(/_/g, " ")}{run.cached ? " (saved from an earlier identical run)" : ""} · physical checks {run.checksPassed ? "passed" : "FAILED"}. Simulation on the real demand shape with synthetic devices. Not a forecast or an engineering study.</div>
     </Card>
   );
 }
@@ -350,7 +370,7 @@ function Slider({ t, label, value, min, max, step, unit, set, note }: { t: T; la
   return <label style={{ display: "block", marginTop: 8 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span>{label}</span><b style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}{unit}</b></div>
     <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => set(+e.target.value)} style={{ width: "100%", accentColor: TEAL, margin: "4px 0 0" }} aria-label={label} />{note && <div style={{ fontSize: 11, color: t.mut }}>{note}</div>}</label>;
 }
-function Drawer({ t, params: p, setP, provider, setProvider, world, close, defaults }: { t: T; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; world: SandboxWorldInfo | null; close: () => void; defaults: DeviceParams }) {
+function Drawer({ t, llm, params: p, setP, provider, setProvider, world, close, defaults }: { t: T; llm: boolean; params: DeviceParams; setP: (k: keyof DeviceParams, v: number) => void; provider: "stub" | "openai"; setProvider: (v: "stub" | "openai") => void; world: SandboxWorldInfo | null; close: () => void; defaults: DeviceParams }) {
   const sec = (title: string, sub: string) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 10, borderTop: `1px solid ${t.ln}` }}><b style={{ fontFamily: FD, fontSize: 15 }}>{title}</b><span style={{ fontSize: 11, color: t.mut }}>{sub}</span></div>;
   const dd = world?.deviceDetails;
   return (
@@ -376,7 +396,7 @@ function Drawer({ t, params: p, setP, provider, setProvider, world, close, defau
       <div style={{ fontSize: 12, color: t.mut, marginTop: 10 }}>Load sizes are set on each load in the tray. A data centre&apos;s own flexible compute: next.</div>
       {sec("Owner agents", "who decides")}
       <select value={provider} onChange={(e) => setProvider(e.target.value as "stub" | "openai")} aria-label="Owner agent provider" style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${t.ln}`, background: t.sub, color: t.fg, marginTop: 8, padding: "0 8px" }}>
-        <option value="stub">Deterministic stub (no API)</option><option value="openai">Real LLM owners (OpenAI, needs a key)</option>
+        <option value="openai" disabled={!llm}>Real LLM owners (OpenAI){llm ? "" : " — no key configured"}</option><option value="stub">Deterministic policy (instant, no API)</option>
       </select>
       <button onClick={() => (Object.keys(defaults) as (keyof DeviceParams)[]).forEach((k) => setP(k, defaults[k]))} style={{ marginTop: 12, height: 34, padding: "0 14px", borderRadius: 17, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontSize: 13, cursor: "pointer" }}>Reset to defaults</button>
     </Card>
@@ -405,8 +425,9 @@ function Inspector({ t, world, which, run, fleet, close }: { t: T; world: Sandbo
   );
 }
 
-function Tabs({ t, tab, setTab, count }: { t: T; tab: "result" | "seasons" | "history"; setTab: (x: "result" | "seasons" | "history") => void; count: number }) {
-  const items: ["result" | "seasons" | "history", string][] = [["result", "Result"], ["seasons", "Seasons"], ["history", `Runs (${count})`]];
+type TabKey = "result" | "seasons" | "log" | "history";
+function Tabs({ t, tab, setTab, count }: { t: T; tab: TabKey; setTab: (x: TabKey) => void; count: number }) {
+  const items: [TabKey, string][] = [["result", "Result"], ["seasons", "Seasons"], ["log", "Log"], ["history", `Runs (${count})`]];
   return <div role="tablist" style={{ position: "absolute", left: 1096, top: 24, width: 320, display: "flex", gap: 6 }}>
     {items.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} style={{ flex: 1, height: 34, borderRadius: 17, fontSize: 13, fontWeight: 600, cursor: "pointer", border: `1px solid ${tab === k ? "transparent" : t.ln}`, background: tab === k ? t.fg : t.bg, color: tab === k ? (t.dark ? INK : PAPER) : t.fg }}>{l}</button>)}
   </div>;
@@ -457,6 +478,33 @@ function History({ t, history, onRestore }: { t: T; history: HistoryEntry[]; onR
             <button onClick={() => onRestore(h)} style={{ marginTop: 6, height: 28, padding: "0 12px", borderRadius: 14, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontSize: 12, cursor: "pointer" }}>Load this setup</button>
           </div>); })}
       </div>
+    </Card>
+  );
+}
+
+const STATUS_CHIP: Record<string, [string, string, string]> = { accepted: ["Accepted", "#CDEFE6", "#0B5C4C"], declined: ["Declined", "#E4E6E8", "#4A4F57"], rejected: ["Physics said no", "#FCE9C4", "#7A4B00"], priced_out: ["Too expensive", "#FBD9D2", "#8C2415"], fallback: ["Backup policy", "#FCE9C4", "#7A4B00"] };
+function LogPane({ t, run }: { t: T; run: SandboxRun }) {
+  const m = run.market, log = [...run.ownerLog].sort((a, b) => b.dispatchedMwh - a.dispatchedMwh || a.name.localeCompare(b.name));
+  const stat = (k: string, v: string) => <div style={{ padding: "6px 8px", borderRadius: 8, background: t.sub }}><div style={{ fontSize: 10, color: t.mut }}>{k}</div><b style={{ fontFamily: FD, fontSize: 15, fontVariantNumeric: "tabular-nums" }}>{v}</b></div>;
+  return (
+    <Card t={t} x={1096} y={66} w={320} h={702}>
+      <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Owners and optimizer</div>
+      <div style={{ fontSize: 12, color: t.mut, margin: "2px 0 8px" }}>Who decided what, and what the optimizer cleared. {SOURCE_LABEL[run.decisionSource] ?? run.decisionSource}.</div>
+      {!run.hasOverload || !m ? <div style={{ fontSize: 13, color: t.mut }}>No overload at this hour, so nothing was requested.</div> : <>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+          {stat("Requested", `${m.requestedMwh.toFixed(1)} MWh`)}{stat("Offered (raw)", `${m.offeredMwh.toFixed(1)} MWh`)}{stat("Passed physics", `${m.validatedMwh.toFixed(1)} MWh`)}
+          {stat("Dispatched", `${m.dispatchedMwh.toFixed(1)} MWh`)}{stat("Cost", `$${Math.round(m.clearingCost).toLocaleString()}`)}{stat("LLM calls", `${m.agentCalls}`)}
+        </div>
+        <div style={{ fontSize: 11, color: t.mut, margin: "8px 0 4px" }}>{m.ownersAccepted} accepted · {m.ownersDeclined} declined · {m.ownersRejected} rejected by physics · {m.ownersPricedOut} priced out · ceiling ${m.incentivePerMwh}/MWh{run.cached ? " · saved result" : ` · ${(m.durationMs / 1000).toFixed(1)} s`}</div>
+        <div style={{ maxHeight: 470, overflowY: "auto" }}>
+          {log.map((o) => { const c = STATUS_CHIP[o.status] ?? STATUS_CHIP.declined; return (
+            <div key={o.ownerId} style={{ padding: "8px 0", borderTop: `1px solid ${t.ln}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot c={GROUP_COLOR[o.group]} /><b style={{ fontSize: 12, flexGrow: 1, fontWeight: 600 }}>{o.name}</b><Pill bg={c[1]} fg={c[2]}>{c[0]}</Pill></div>
+              <div style={{ fontSize: 11, color: t.mut, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{o.assets} clusters · {o.source === "openai" ? "LLM decision" : "policy decision"}{o.offeredMw > 0 ? ` · offered ${o.offeredMw.toFixed(1)} MW${o.pricePerMwh != null ? ` at $${o.pricePerMwh}` : ""}` : ""}{o.dispatchedMwh > 0 ? ` · dispatched ${o.dispatchedMwh.toFixed(1)} MWh ($${Math.round(o.cost)})` : ""}</div>
+              {o.explanation && <div style={{ fontSize: 11, marginTop: 3, lineHeight: 1.35 }}>{o.explanation}</div>}
+            </div>); })}
+        </div>
+      </>}
     </Card>
   );
 }

@@ -2,9 +2,9 @@
 
 ## Current Status
 - **Product:** Waterloo Electric, a live isometric flexible-grid sandbox (see `PLAN.md`). Engine (Phases 0-7) unchanged and tested.
-- **Current stage: Stage C (live experience) next.** Stages 0, A, B done and committed.
+- **Current stage: Stage D (credibility + submission prep).** Stages 0, A, B, C done and committed.
 - Last verified: sandbox tests 18 passed; full backend suite 162 passed + 1 stale Phase-2 test fixed right after (housing/EV depot are now implemented); web 15 passed, lint and tsc clean, production build clean; browser-verified multi-load, device counts, season test.
-- Known limitations: default owners are the deterministic policy until Stage C makes LLM owners the visible default; data-centre flexible compute not modeled; capacity 90 MW is still an assumption (Stage D: real station limit); live clock, asset log and optimizations pane not built yet.
+- Known limitations: data-centre flexible compute not modeled; capacity 90 MW is an assumption (a real station limit was NOT added: no verified source, so it stays labelled Modeled); season test uses the deterministic policy unless real-LLM results are cached; LLM run takes ~35 s the first time, then is cached.
 
 ### Stage tracker (updated as I build; times are wall clock, deadline Sun 12:00)
 | Stage | Scope | Status |
@@ -17,7 +17,7 @@
 | 5 | Device editor drawer | DONE (+ device inspector, "what changed" line) |
 | A | Sandbox breadth: editable device counts, multiple loads, visible defaults | DONE |
 | B | Experimentation: season test + run history | DONE |
-| C | Live experience: streamed owner states, LLM default + cache, asset log, optimizations pane, light clock | NEXT |
+| C | Live experience: streamed owner states, LLM default + cache, asset log, optimizations pane, light clock | DONE |
 | D | Credibility + submission | NOT STARTED |
 | 6 | Narration + polish | DONE (error/loading states, retry, 30 s request timeout, inspector, change note, projector-size check at 1280x720, pinned default scenario) |
 | 7 | Freeze, docs, submit | IN PROGRESS |
@@ -118,3 +118,11 @@ Stage B: `POST /api/sandbox/matrix` (4 seasons, one run each, concurrent, whole-
 Tests: backend +7 (sandbox file 18: counts, owner regroup, housing/depot loads, multi-load, acceptance sentence, matrix x3). Web unchanged (15).
 Findings: default world (234 clusters) holds a 20 MW data centre at 2 pm summer (1.5 s run); 4-season test takes ~3 s with the stub; at 20 MW winter and spring show no overload; at 35 MW every season is stressed and summer breaks.
 Next: Stage C.
+
+## Stage C DONE
+- Real LLM owners are the visible default when a key is configured (`llmAvailable` on the world; otherwise labelled deterministic policy). Owner decisions stream to the UI as each returns (`POST /api/sandbox/run-stream`, NDJSON): "5 of 18 owners have decided".
+- Decision cache: identical constraint sets replay instantly (memory + `apps/api/.cache/sandbox`, gitignored); labelled "saved from an earlier identical run". Season test reuses cached LLM runs, otherwise deterministic policy.
+- Log tab: per-owner asset log (status, offer, price, dispatched MWh, cost, the owner's own explanation, LLM vs policy) plus optimizer summary (requested/offered/passed physics/dispatched/cost/calls/seconds).
+- Light clock: "Play the day" sweeps the real reference day (gauge, day/night, overload state from the run's curve).
+- Live check: 18/18 real gpt-5.4-mini owners in 34 s, repeat 0.03 s from cache. Tests: 170 backend passed (4 new), web 15 passed, lint/tsc/build clean.
+

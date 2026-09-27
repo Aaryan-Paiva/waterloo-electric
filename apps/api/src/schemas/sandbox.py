@@ -48,6 +48,39 @@ class SandboxRunRequest(CamelModel):
     device_params: DeviceParams = Field(default_factory=DeviceParams)
 
 
+class OwnerLog(CamelModel):
+    """One owner/operator's decision in the run: the asset log."""
+    owner_id: str
+    name: str
+    group: Group
+    assets: int
+    status: str                      # accepted | declined | rejected | priced_out | fallback
+    offered_mw: float = 0.0
+    price_per_mwh: Optional[float] = None
+    dispatched_mwh: float = 0.0
+    cost: float = 0.0
+    explanation: str = ""
+    source: str                      # openai | stub
+
+
+class MarketLog(CamelModel):
+    requested_peak_mw: float
+    requested_mwh: float
+    offered_mwh: float
+    validated_mwh: float
+    dispatched_mwh: float
+    priced_out_mwh: float
+    clearing_cost: float
+    incentive_per_mwh: float
+    owners_offered: int
+    owners_declined: int
+    owners_rejected: int
+    owners_priced_out: int
+    owners_accepted: int
+    agent_calls: int
+    duration_ms: float
+
+
 class SeasonInfo(CamelModel):
     reference_day: str
     hourly_baseline_mw: list[float]
@@ -75,6 +108,7 @@ class SandboxWorld(CamelModel):
     owner_count: int
     seasons: dict[str, SeasonInfo]
     defaults: DeviceParams
+    llm_available: bool = False      # a live OpenAI key is configured, so owners can be real LLM agents
     note: str
 
 
@@ -125,6 +159,9 @@ class SandboxRunResponse(CamelModel):
     params_applied: list[str]
     params_pending: list[str]
     run_id: Optional[str] = None
+    owner_log: list[OwnerLog] = Field(default_factory=list)
+    market: Optional[MarketLog] = None
+    cached: bool = False
     provenance: dict[str, str]
     note: str
 

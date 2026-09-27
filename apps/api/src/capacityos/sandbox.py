@@ -4,9 +4,12 @@ One call = one dropped data centre in one real season/hour. It picks the real st
 (owner policy -> physical validation -> OR-Tools clearing) on the event window, and returns a PLAYBACK SCRIPT built only from the real run trace.
 Nothing here computes physics; the baseline and the world are never mutated (the scenario is a throwaway overlay).
 """
+import hashlib
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from functools import lru_cache
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -16,7 +19,7 @@ from ..owners.grouping import build_owners
 from ..owners.runner import run_agentic
 from ..projects.loads import make_load
 from ..schemas.owners import AgenticRun, OwnerAgent
-from ..schemas.sandbox import (Curve, DeviceParams, DeviceTypeInfo, LoadSpec, MatrixRequest, MatrixResponse, SeasonCell, SandboxRunRequest, SandboxRunResponse, SandboxWorld, ScriptStep, SeasonInfo)
+from ..schemas.sandbox import (Curve, MarketLog, OwnerLog, DeviceParams, DeviceTypeInfo, LoadSpec, MatrixRequest, MatrixResponse, SeasonCell, SandboxRunRequest, SandboxRunResponse, SandboxWorld, ScriptStep, SeasonInfo)
 from ..schemas.scenario import Scenario
 from ..simulation.stress_test import run_capacity_analysis, scenario_frame
 from ..world.population import build_population, use_variant
@@ -79,12 +82,17 @@ def world_info(dp: Optional[DeviceParams] = None) -> SandboxWorld:
         return _world_info()
 
 
+def llm_available() -> bool:
+    from ..owners.providers import provider_status
+    return bool(provider_status()["openaiAvailable"])
+
+
 def _world_info() -> SandboxWorld:
     pack, pop, owners = get_pack(ZONE), build_population(ZONE), build_owners(ZONE)
     dev = {t: sum(1 for a in pop.agents if a.type == t) for t in ("battery", "ev_fleet", "building", "solar")}
     return SandboxWorld(zone_id=ZONE, zone_name=pack.name, capacity_mw=pack.capacity.value_mw,
                         provenance={"demand": "derived (real IESO shape, scaled)", "devices": "modeled (synthetic)", "capacity": "modeled (assumed)", "dataCentre": "hypothetical"},
-                        devices=dev, device_details=_details(pop, owners), owner_count=len(owners), seasons=seasons_info(), defaults=DeviceParams(),
+                        devices=dev, device_details=_details(pop, owners), owner_count=len(owners), seasons=seasons_info(), defaults=DeviceParams(), llm_available=llm_available(),
                         note="A planning sandbox on real demand shape with synthetic devices. Not a forecast or an engineering study.")
 
 
@@ -163,8 +171,75 @@ def build_script(run: AgenticRun, focus_ts: str, inc: float) -> tuple[list[Scrip
     return steps, {k: round(v, 3) for k, v in by.items()}, row.pre_dispatch_net_mw, row.optimized_net_mw
 
 
-def run_sandbox(req: SandboxRunRequest) -> SandboxRunResponse:
+CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "sandbox"
+_mem: dict[str, SandboxRunResponse] = {}
+
+
+def _cache_key(req: SandboxRunRequest, loads) -> str:
+    body = {"s": req.season, "h": req.hour, "l": [list(x) for x in loads], "p": req.provider, "i": req.incentive_per_mwh, "d": req.device_params.model_dump(mode="json")}
+    return hashlib.blake2b(json.dumps(body, sort_keys=True).encode(), digest_size=10).hexdigest()
+
+
+def _cache_get(key: str) -> Optional[SandboxRunResponse]:
+    """Decision cache: a repeated constraint set replays the same owner decisions (real LLM runs are slow and cost credits). In memory, plus disk for LLM runs."""
+    if key in _mem:
+        return _mem[key]
+    f = CACHE_DIR / f"{key}.json"
+    try:
+        if f.exists():
+            _mem[key] = SandboxRunResponse.model_validate_json(f.read_text())
+            return _mem[key]
+    except Exception:                                                                     # noqa: BLE001 — a bad cache file is just a miss
+        pass
+    return None
+
+
+def _cache_put(key: str, r: SandboxRunResponse) -> None:
+    _mem[key] = r
+    if r.decision_source in ("llm_openai", "mixed_llm_and_stub"):
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            (CACHE_DIR / f"{key}.json").write_text(r.model_dump_json(by_alias=True))
+        except OSError:
+            pass
+
+
+def owner_log(run: AgenticRun) -> list[OwnerLog]:
+    by_rec = {r.owner_id: r for r in run.records}
+    out = []
+    for o in run.owners:
+        r = by_rec.get(o.id)
+        if r is None:
+            continue
+        last = r.offers[-1] if r.offers else None
+        status = "fallback" if r.fallback_reason and not r.offers else r.status
+        out.append(OwnerLog(owner_id=o.id, name=o.name, group=GROUP_OF[o.owner_type], assets=len(o.controlled_asset_ids), status=status,
+                            offered_mw=round(last.peak_mw, 2) if last else 0.0, price_per_mwh=round(last.body.price_per_mwh, 1) if last else None,
+                            dispatched_mwh=round(r.dispatched_mwh, 2), cost=round(r.cost, 2), explanation=(r.decision_explanation or "")[:260],
+                            source="openai" if r.provider_used == "openai" else "stub"))
+    return out
+
+
+def market_log(run: AgenticRun) -> MarketLog:
+    m, d = run.market, run.diagnostics
+    return MarketLog(requested_peak_mw=m.requested_peak_mw, requested_mwh=m.requested_mwh, offered_mwh=m.offered_mwh, validated_mwh=m.validated_mwh, dispatched_mwh=m.dispatched_mwh,
+                     priced_out_mwh=m.priced_out_mwh, clearing_cost=m.clearing_cost, incentive_per_mwh=m.incentive_price_per_mwh, owners_offered=m.owners_offered,
+                     owners_declined=m.owners_declined, owners_rejected=m.owners_rejected, owners_priced_out=m.owners_priced_out, owners_accepted=m.owners_accepted,
+                     agent_calls=d.agent_calls, duration_ms=d.duration_ms)
+
+
+def run_sandbox(req: SandboxRunRequest, on_progress: Optional[Callable[[dict], None]] = None) -> SandboxRunResponse:
     loads = _norm_loads(req)
+    ck = _cache_key(req, loads)
+    hit = _cache_get(ck)
+    if hit is not None:
+        return hit.model_copy(update={"cached": True})
+    r = _run_sandbox(req, loads, on_progress)
+    _cache_put(ck, r)
+    return r
+
+
+def _run_sandbox(req: SandboxRunRequest, loads, on_progress) -> SandboxRunResponse:
     sc, df, cap, windows = _overlay(loads)
     day = reference_day(req.season)
     target = day + pd.Timedelta(hours=req.hour)
@@ -196,7 +271,7 @@ def run_sandbox(req: SandboxRunRequest) -> SandboxRunResponse:
     key = variant_key(dp)
     try:
         with use_variant(key):
-            run = run_agentic(sc, w_start, w_end, None, req.incentive_per_mwh, req.provider, 8, owners_override=owners_for(dp))
+            run = run_agentic(sc, w_start, w_end, None, req.incentive_per_mwh, req.provider, 8, owners_override=owners_for(dp), on_progress=on_progress)
     except CoordinationError as e:
         raise ValueError(str(e))
     script, by, pre, post = build_script(run, target.isoformat(), req.incentive_per_mwh)
@@ -212,7 +287,7 @@ def run_sandbox(req: SandboxRunRequest) -> SandboxRunResponse:
                               absorbed_mw=round(absorbed, 2), remaining_mw=round(remaining, 2), outcome=outcome, outcome_text=text, dispatch_by_group=by, script=script,
                               curve=Curve(hours=list(range(24)), before=curve.before, after=after), owners_total=run.market.owners_total, owners_accepted=run.market.owners_accepted,
                               event_energy_before_mwh=w.energy_above_capacity_before_mwh, event_energy_after_mwh=w.energy_above_capacity_after_mwh,
-                              decision_source=run.decision_source, checks_passed=run.coordination.checks_passed, run_id=run.id, **common)
+                              decision_source=run.decision_source, checks_passed=run.coordination.checks_passed, run_id=run.id, owner_log=owner_log(run), market=market_log(run), **common)
 
 
 def run_matrix(req: MatrixRequest) -> MatrixResponse:
@@ -228,7 +303,11 @@ def run_matrix(req: MatrixRequest) -> MatrixResponse:
         day = reference_day(season)
         net = frame.loc[day: day + pd.Timedelta(hours=23), "net_mw"]
         peak_hour = int(net.reset_index(drop=True).idxmax())
-        r = run_sandbox(SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider=req.provider, incentive_per_mwh=req.incentive_per_mwh, device_params=req.device_params))
+        r = None
+        if req.provider == "openai":                                             # the season test reuses real LLM decisions only when they are already cached; it never fans out 4x18 live calls
+            sr = SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider="openai", incentive_per_mwh=req.incentive_per_mwh, device_params=req.device_params)
+            r = _cache_get(_cache_key(sr, _norm_loads(sr)))
+        r = r or run_sandbox(SandboxRunRequest(season=season, hour=peak_hour, loads=loads, provider="stub", incentive_per_mwh=req.incentive_per_mwh, device_params=req.device_params))
         before, after = r.curve.before, r.curve.after
         states = ["within" if b <= cap + 1e-6 else "absorbed" if a <= cap + 0.05 else "over" for b, a in zip(before, after)]
         rank = {"within": 0, "absorbed": 1, "over": 2}

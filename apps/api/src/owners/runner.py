@@ -11,9 +11,9 @@ import hashlib
 import json
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -64,7 +64,8 @@ def _resolve_provider(requested: str, override: Optional[OwnerAgentProvider]) ->
 
 def run_agentic(scenario: Scenario, w_start: pd.Timestamp, w_end: pd.Timestamp, window_id: Optional[str] = None, incentive: float = 80.0,
                 provider: Optional[str] = None, tail_hours: int = 8, provider_override: Optional[OwnerAgentProvider] = None,
-                replay_of: Optional[str] = None, owners_override: Optional[list[OwnerAgent]] = None) -> AgenticRun:
+                replay_of: Optional[str] = None, owners_override: Optional[list[OwnerAgent]] = None,
+                on_progress: Optional[Callable[[dict], None]] = None) -> AgenticRun:
     from .. import settings
     t_run = time.perf_counter()
     ph = build_physics(scenario, w_start, w_end, tail_hours)
@@ -99,9 +100,17 @@ def run_agentic(scenario: Scenario, w_start: pd.Timestamp, w_end: pd.Timestamp, 
     if prov.name in ("stub", "replay"):
         first = {o.id: call(prov.decide, contexts[o.id]) for o in owners}
     else:
+        names = {o.id: o.name for o in owners}
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-            futs = {o.id: ex.submit(call, prov.decide, contexts[o.id]) for o in owners}
-            first = {k: f.result() for k, f in futs.items()}
+            futs = {ex.submit(call, prov.decide, contexts[o.id]): o.id for o in owners}
+            first = {}
+            for n, f in enumerate(as_completed(futs), 1):                # stream each owner's decision as soon as it returns
+                oid = futs[f]
+                first[oid] = f.result()
+                if on_progress:
+                    res_, err_, ms_ = first[oid]
+                    kind = "fallback" if err_ else "declined" if isinstance(res_.action, DeclineOffer) else "offered"
+                    on_progress({"type": "owner", "ownerId": oid, "ownerName": names[oid], "status": kind, "done": n, "total": len(owners), "ms": round(ms_)})
 
     def account(res: Optional[ProviderResult], err: Optional[ProviderError]) -> None:
         if res:

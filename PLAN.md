@@ -46,7 +46,7 @@ Scope in one sentence: **test whether a set of flexibility constraints holds aga
 4. Tests: population counts deterministic and prefix-stable, base engine population untouched, multi-load net load adds, sandbox re-pinned.
 ### Stage B — Experimentation (04:30–06:30)
 Season matrix (4 real reference days, per-hour cells from one run each), run history (constraints -> outcome), before/after, easy rerun and compare.
-### Stage C — Live experience (06:30–09:00)
+### Stage C — Live experience (DONE)
 Streamed owner states, real LLM owners as the visible default (decision cache, stub fallback labelled), asset log + optimizations pane, light live clock.
 ### Stage D — Credibility and submission (09:00–12:00)
 Waterloo station limit (derived, labelled), projector layout, fallback recording, README/PLAN/PROGRESS, public repo (user's OK), video.
