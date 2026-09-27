@@ -43,6 +43,7 @@ export function Sandbox() {
   const [capOverride, setCapOverride] = useState<number | null>(null);
   const [rec, setRec] = useState<{ key: string; data: RecommendResponse } | null>(null);
   const [recBusy, setRecBusy] = useState(false);
+  const [help, setHelp] = useState(false);
   const [live, setLive] = useState<OwnerProgress[]>([]);
   const [clock, setClock] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -74,6 +75,12 @@ export function Sandbox() {
   useEffect(() => { runRef.current = run; }, [run]);
 
   useEffect(() => { fetchSandboxWorld().then((w) => { setWorld(w); if (!w.llmAvailable) setProvider("stub"); }).catch((e) => setErr(String(e))); }, []);
+  useEffect(() => {
+    const h = setTimeout(() => {
+      try { if (!localStorage.getItem("we-seen-help")) { setHelp(true); localStorage.setItem("we-seen-help", "1"); } } catch { /* private window or blocked storage: skip the one-time hint, no harm */ }
+    }, 50);
+    return () => clearTimeout(h);
+  }, []);
   useEffect(() => {
     if (!playing) return;
     const id = setInterval(() => { const n = (clockRef.current ?? -1) + 1; if (n > 23) { clockRef.current = null; setClock(null); setPlaying(false); } else { clockRef.current = n; setClock(n); } }, 800);
@@ -180,7 +187,13 @@ export function Sandbox() {
     return () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
   }, [drag, toStage, dragKind]);
 
-  const reset = () => { reqId.current++; setLoads([]); setRun(null); setProg(0); setBusy(false); setPrev(null); lastDone.current = null; setErr(null); setInspect(null); };
+  const reset = () => {
+    reqId.current++; histN.current = 0; clockRef.current = null; lastDone.current = null;
+    setLoads([]); setRun(null); setProg(0); setBusy(false); setPrev(null); setErr(null); setInspect(null);
+    setParams(DEFAULTS); setIncentive(100); setCapOverride(null); setProvider(world?.llmAvailable ? "openai" : "stub");
+    setMatrix(null); setMatrixBusy(false); setRec(null); setRecBusy(false); setLive([]); setHistory([]);
+    setClock(null); setPlaying(false); setTab("result"); setDrawer(false); setTrayOpen(false);
+  };
   const setP = (k: keyof DeviceParams, v: number) => setParams((p) => ({ ...p, [k]: v }));
 
   if (err && !world) return (
@@ -204,11 +217,17 @@ export function Sandbox() {
           <div onClick={(e) => { const p = toStage(e.clientX, e.clientY); const hit = ([["battery", ANCHORS.battery], ["ev", ANCHORS.ev], ["building", ANCHORS.building]] as [Group, [number, number]][]).find(([, a]) => Math.hypot(p.x - a[0], p.y - 30 - a[1]) < 90); if (hit) { setInspect(hit[0]); setDrawer(false); } }} style={{ position: "absolute", inset: 0 }} aria-hidden="true" />
           <IsoWorld season={season} night={night} phase={phase} active={active} loads={loads} dragging={!!drag} hoverLot={hoverLot} />
 
+          {help && <HelpOverlay close={() => setHelp(false)} />}
+
           {/* brand + provenance */}
           <Card t={t} x={24} y={24} w={352} h={104}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 34, height: 34, borderRadius: 10, background: AMB, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill={AMB} stroke={INK} strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg></div>
-              <div><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, lineHeight: 1.1 }}>Waterloo Electric</div><div style={{ fontSize: 12, color: t.mut }}>Flexible-grid sandbox</div></div>
+              <div style={{ flexGrow: 1 }}><div style={{ fontFamily: FD, fontWeight: 700, fontSize: 20, lineHeight: 1.1 }}>Waterloo Electric</div><div style={{ fontSize: 12, color: t.mut }}>Flexible-grid sandbox</div></div>
+              <button onClick={() => setHelp(true)} aria-label="How to use Waterloo Electric" style={{ width: 30, height: 30, borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, fontFamily: FD, fontWeight: 700, fontSize: 14, cursor: "pointer", flex: "none" }}>?</button>
+              <button onClick={() => { if (loads.length === 0 && Object.keys(params).every((k) => params[k as keyof DeviceParams] === DEFAULTS[k as keyof DeviceParams]) && !capOverride) return; reset(); }} aria-label="Reset the whole world" title="Reset the whole world" style={{ width: 30, height: 30, borderRadius: 15, border: `1px solid ${t.ln}`, background: "transparent", color: t.fg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>
+              </button>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
               {([[TEAL, "Demand: real shape, derived"], [AMB, "Devices: synthetic"], [capOverride ? CORAL : "#9AA0A6", capOverride ? `Capacity: your assumption (${capOverride} MW)` : "Capacity: assumed"]] as const).map(([c, l]) => <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 22, padding: "0 9px", borderRadius: 11, background: t.sub, fontSize: 11, color: t.mut }}><Dot c={c} />{l}</span>)}
@@ -566,5 +585,35 @@ function FixPane({ t, run, rec, busy, onApply, onCapacity }: { t: T; run: Sandbo
         <div style={{ fontSize: 11, color: t.mut, marginTop: 12, lineHeight: 1.4 }}>{rec.note}</div>
       </>}
     </Card>
+  );
+}
+
+function HelpOverlay({ close }: { close: () => void }) {
+  const steps: [string, string][] = [
+    ["1. Drag a load onto an empty lot", "Data centre, housing or EV depot, from the tray on the right or the dock at the bottom. Up to four at once."],
+    ["2. Watch the grid respond", "18 owner agents decide whether to help; a physical check cuts offers their devices cannot deliver; an optimizer picks who does what."],
+    ["3. Read the result", "How much of the overload was absorbed, by which device type, and whether it holds, partly holds or breaks."],
+    ["4. Change the conditions", "Season and hour at the bottom, or Play the day. Each season is the real highest-demand day of 2021-2025."],
+    ["5. Edit the devices", "Counts, incentive, enrolment and limits. A run only changes after you edit and it reruns."],
+    ["6. Fix it", "If it breaks: two verified ways to close the gap, tightening the flexibility program or adding zone capacity. Every option is a real rerun."],
+    ["7. Log and Seasons", "Log shows every owner's decision. Seasons tests the same setup against all four."],
+  ];
+  return (
+    <div role="dialog" aria-modal="true" aria-label="How to use Waterloo Electric" style={{ position: "absolute", inset: 0, background: "rgba(20,24,20,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }} onClick={close}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 620, maxWidth: "92%", maxHeight: "86%", overflowY: "auto", borderRadius: 18, background: PAPER, color: INK, padding: 26, fontFamily: FB, boxShadow: "0 20px 60px rgba(0,0,0,.35)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 22 }}>How to use Waterloo Electric</div>
+          <button onClick={close} aria-label="Close" style={{ border: 0, background: "rgba(29,35,32,.07)", color: INK, width: 32, height: 32, borderRadius: 16, cursor: "pointer", fontSize: 16 }}>×</button>
+        </div>
+        <p style={{ fontSize: 14, lineHeight: 1.5, marginTop: 6 }}>A testing ground for flexibility programs (VPPs): does a set of rules hold when new demand joins a Waterloo-shaped grid, in each season? Not a forecast, a recommendation engine, or a verdict on any real project.</p>
+        <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
+          {steps.map(([h, b]) => <div key={h}><b style={{ fontFamily: FD, fontSize: 14 }}>{h}</b><div style={{ fontSize: 13, color: "#4A4F45", marginTop: 2, lineHeight: 1.4 }}>{b}</div></div>)}
+        </div>
+        <div style={{ marginTop: 16, padding: 12, borderRadius: 10, background: "rgba(29,35,32,.06)", fontSize: 12, lineHeight: 1.5 }}>
+          <b>What&apos;s real and what isn&apos;t:</b> demand shape is real IESO data, derived; devices, owners and the 90 MW capacity are modeled; anything you drag in is hypothetical; every run is derived from them, not observed.
+        </div>
+        <button onClick={close} style={{ marginTop: 18, height: 40, padding: "0 20px", borderRadius: 20, border: 0, background: INK, color: PAPER, fontWeight: 600, cursor: "pointer" }}>Got it</button>
+      </div>
+    </div>
   );
 }

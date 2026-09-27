@@ -10,8 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 from typing import Optional
 
+import hashlib
+import json
+from pathlib import Path
+
 from ..schemas.sandbox import CapacityPathway, ConstraintPathway, DeviceParams, LoadSpec, RecommendResponse, SandboxRunRequest
-from .sandbox import _norm_loads, _overlay, _season_cell, reference_day
+from .sandbox import CACHE_DIR, _norm_loads, _overlay, _season_cell, reference_day
 
 TOL = 0.05
 _POOL: Optional[ThreadPoolExecutor] = None
@@ -58,7 +62,39 @@ def _levers(dp: DeviceParams, inc: float) -> list[tuple[str, list[tuple[str, dic
     return [(n, o) for n, o in out if o]
 
 
+_mem: dict[str, RecommendResponse] = {}
+
+
+def _rec_key(req: SandboxRunRequest) -> str:
+    loads = req.loads or [LoadSpec(kind="data_centre", size=req.dc_mw)]
+    body = {"s": req.season, "l": sorted((x.kind, round(float(x.size), 1)) for x in loads), "i": req.incentive_per_mwh, "c": req.capacity_mw, "d": req.device_params.model_dump(mode="json")}
+    return "rec_" + hashlib.blake2b(json.dumps(body, sort_keys=True).encode(), digest_size=10).hexdigest()
+
+
 def recommend(req: SandboxRunRequest) -> RecommendResponse:
+    """A rerun-heavy search (20-30 reruns): cached, so a rehearsed demo scenario replays instantly instead of taking up to a minute."""
+    key = _rec_key(req)
+    if key in _mem:
+        return _mem[key]
+    f = CACHE_DIR / f"{key}.json"
+    try:
+        if f.exists():
+            r = RecommendResponse.model_validate_json(f.read_text())
+            _mem[key] = r
+            return r
+    except Exception:                                                                     # noqa: BLE001 — a bad cache file is just a miss
+        pass
+    r = _recommend(req)
+    _mem[key] = r
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        f.write_text(r.model_dump_json(by_alias=True))
+    except OSError:
+        pass
+    return r
+
+
+def _recommend(req: SandboxRunRequest) -> RecommendResponse:
     loads = req.loads or [LoadSpec(kind="data_centre", size=req.dc_mw)]
     key = _norm_loads(SandboxRunRequest(loads=loads, dc_mw=req.dc_mw))
     dp0, inc0, cap_o = req.device_params, req.incentive_per_mwh, req.capacity_mw

@@ -141,3 +141,11 @@ Next: Stage C.
 - Bug the search surfaced and fixed: a real-LLM owner controlling 42 assets crashed on submit_offer's 40-item cap (schemas/owners.py `SubmitOffer`/`RequestInformation` max_length raised to 200). Caught by the search hammering high device counts, not by manual testing — a good example of why to build this.
 - Tests: 175 backend passed (5 new: already-holds no-op, verified pathways, capacity-pathway rerun, capacity override changes result + provenance, the route). Browser-verified: search runs (~35-45s, 20-25 reruns), constraint pathway shown even when insufficient, capacity pathway "Try this limit" applies and reruns correctly labelled as a user assumption.
 - Known limits: search runs 20-30 s to a minute; only levers already below their bound are offered; the acceptance-scenario constraint pathway does not fully close the gap in the current search (capacity pathway does, verified).
+
+## Polish pass (post-Stage-D, pre-deploy)
+- Graceful failures: every sandbox API route now catches unexpected errors as a plain 500 message (no stack trace to the client), not just ValueErrors.
+- Recommend ("Fix it") is now cached to disk like a run, so a rehearsed demo search replays instantly instead of taking up to a minute.
+- Full reset: a "reset the whole world" icon is always reachable (top-left brand card), clears every param/provider/incentive/capacity/tab/history/cache-key back to defaults, and cancels any in-flight run cleanly (verified mid-stream in the browser).
+- New: a "How to use" overlay (also shown once automatically per browser via localStorage) and a public landing page at `/` (pitch, how it works, data-honesty table, CTA); the sandbox itself moved to `/sandbox`.
+- Fixed: the "?"/reset icons were overlapping the tray panel at 1280x720; moved into the brand card.
+- Retested: 175 backend, 15 web, lint/tsc/build clean; browser-verified help overlay, reset mid-run, landing page at 1280x720.
