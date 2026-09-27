@@ -149,3 +149,12 @@ Next: Stage C.
 - New: a "How to use" overlay (also shown once automatically per browser via localStorage) and a public landing page at `/` (pitch, how it works, data-honesty table, CTA); the sandbox itself moved to `/sandbox`.
 - Fixed: the "?"/reset icons were overlapping the tray panel at 1280x720; moved into the brand card.
 - Retested: 175 backend, 15 web, lint/tsc/build clean; browser-verified help overlay, reset mid-run, landing page at 1280x720.
+- Clean-machine check: fresh `git clone` -> install -> test -> build passed (27 sandbox tests, 15 web tests, clean build) in an isolated worktree.
+
+### Demo cache warmed with real OpenAI owners
+- The OpenAI key had zero credits mid-session (`RateLimitError: no credits remaining`, confirmed via `provider_status()` that key/SDK/config were otherwise fine); every owner fell back to the labelled deterministic policy, which is the graceful-failure path working as designed, not a bug. User added credits.
+- Cleared the stale disk cache (it was holding `deterministic_stub` results under the same request-hash keys real runs would use) and re-ran `scripts/warm_cache.py`: all 3 demo scenarios now cache with `decisionSource=llm_openai` (0 fallbacks). Restarted the uvicorn process afterward — its in-memory decision cache was still serving pre-credit stub results even after the disk cache was cleared.
+- Also warmed `recommend()` ("Fix it") for the two scenarios that break (acceptance scenario, fall 5pm DC): the search always uses the fast deterministic policy internally regardless of the run's provider, so this needed no LLM credits and took ~36s total.
+- Verified live via curl against the running API: all 3 run scenarios and both recommend searches now return instantly (`cached: true`) with the correct decision source.
+- Note: `.cache/sandbox/` is local and gitignored — it does not travel with a deploy. The Render instance will need its own warm-up run (either via a one-off `warm_cache.py` invocation against it, or by clicking through the demo once after deploy so its own cache fills).
+- Remaining for "deploy it": actually creating the Vercel and Render projects, which needs the user's login on both dashboards — prep files (`Dockerfile`, `render.yaml`) already exist from an earlier stage.
