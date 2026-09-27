@@ -61,7 +61,6 @@ export function Sandbox() {
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState(0);
   const [drawer, setDrawer] = useState(false);
-  const [speak, setSpeak] = useState(false);
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
   const [hoverLot, setHoverLot] = useState<number | null>(null);
   const [scale, setScale] = useState(1);
@@ -155,11 +154,6 @@ export function Sandbox() {
     }, 50);
     return () => { live2 = false; clearTimeout(h); };
   }, [tab, recKey, loads, season, hour, incentive, capOverride, params, finished, rec]);
-
-  useEffect(() => {
-    if (!speak || !last || typeof speechSynthesis === "undefined") return;
-    if (["request", "validation_fail", "dispatch", "done"].includes(last.kind)) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(last.text)); }
-  }, [last, speak]);
 
   const base = world ? world.seasons[season].hourlyBaselineMw[hour] : 78;
   const capacity = capOverride ?? world?.capacityMw ?? 90;
@@ -282,7 +276,6 @@ export function Sandbox() {
           <Card t={t} x={24} y={792} w={1392} h={84} pad={14}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", height: "100%" }}>
               <div style={{ display: "flex", gap: 12, alignItems: "center", width: 760 }}>
-                <button onClick={() => setSpeak((s) => !s)} aria-pressed={speak} aria-label="Read captions aloud" style={{ width: 40, height: 40, borderRadius: 12, border: 0, background: speak ? AMB : t.sub, cursor: "pointer", flex: "none" }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={speak ? INK : t.fg} strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /></svg></button>
                 <div role="status" aria-live="polite" style={{ fontSize: 16, lineHeight: 1.4 }}>{caption}</div>
               </div>
               <div style={{ width: 520 }}>
